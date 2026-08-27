@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "saferpet-memoria",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-memoria.mjs"],
+      "port": 4600
+    }
+  ]
+}

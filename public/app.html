@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SaferPet — painel</title>
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="topo">
+    <div class="marca">
+      <div class="marca-icone">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
+      </div>
+      <div>
+        <div class="marca-nome">SaferPet</div>
+        <div class="marca-empresa" id="nome-empresa"></div>
+      </div>
+    </div>
+    <nav class="abas" id="abas">
+      <a class="aba" href="#/visao">Visão geral</a>
+      <a class="aba" href="#/clientes">Clientes</a>
+      <a class="aba" href="#/pacotes">Pacotes</a>
+      <a class="aba" href="#/config">Configurações</a>
+    </nav>
+    <button class="btn-fantasma btn-mini" id="botao-sair" type="button">Sair</button>
+  </div>
+
+  <main class="conteudo" id="conteudo"></main>
+  <div id="area-modal"></div>
+  <div id="area-toast"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
