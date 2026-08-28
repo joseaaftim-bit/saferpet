@@ -121,9 +121,52 @@ if (executarCicloCompleto) {
   const portal = await chamar('GET', `/api/portal/${cli.dados.token_portal}`);
   verificar('portal do cliente mostra créditos por serviço',
     portal.status === 200 && portal.dados.pacotes[0].itens.length === 2);
+  verificar('agendamento online nasce desligado (sem o petshop pedir)',
+    portal.dados.petshop.aceita_online === false &&
+    portal.dados.petshop.pagamento_disponivel === false);
 
-  console.log('\nPetshop de teste criado — apagar depois no banco:');
-  console.log(`  e-mail: teste-${sufixo}@safersoftware.com.br`);
+  console.log('\n— Fases 3 e 4 no banco real —');
+  const produto = await chamar('POST', '/api/loja/produtos', { token, corpo: {
+    nome: 'Ração (TESTE)', preco_centavos: 25000, estoque: 3,
+  }});
+  verificar('cadastrar produto na loja', produto.status === 201 && produto.dados.estoque === 3);
+
+  const pedidos = await chamar('GET', '/api/loja/pedidos', { token });
+  verificar('painel de pedidos responde', pedidos.status === 200 && Array.isArray(pedidos.dados));
+
+  const semMP = await chamar('POST', `/api/pagamentos/portal/${cli.dados.token_portal}/pedido`, { corpo: {
+    itens: [{ produto_id: produto.dados.id, quantidade: 1 }],
+  }});
+  verificar('sem credencial do Mercado Pago, o pedido é recusado (503)', semMP.status === 503,
+    JSON.stringify(semMP.dados));
+
+  const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const foto = await chamar('POST', '/api/extras/fotos', { token, corpo: {
+    cliente_id: cli.dados.id, pet_id: pet.dados.id, conteudo: pixel, legenda: 'teste',
+  }});
+  verificar('publicar foto do pet', foto.status === 201);
+
+  const vacina = await chamar('POST', '/api/extras/vacinas', { token, corpo: {
+    pet_id: pet.dados.id, nome: 'V10 (TESTE)', reforco_meses: 2,
+  }});
+  verificar('registrar vacina com reforço', vacina.status === 201 && !!vacina.dados.reforco_em);
+
+  const reforcos = await chamar('GET', '/api/extras/vacinas/reforcos?dias=90', { token });
+  verificar('lista de reforços a vencer', reforcos.status === 200 && reforcos.dados.length === 1);
+
+  const relatorios = await chamar('GET', '/api/extras/relatorios?dias=30', { token });
+  verificar('relatórios do dono no banco real',
+    relatorios.status === 200 && relatorios.dados.pacotes_vendidos.total >= 1,
+    JSON.stringify(relatorios.dados && relatorios.dados.pacotes_vendidos));
+
+  const extrasCliente = await chamar('GET', `/api/portal/${cli.dados.token_portal}/extras`);
+  verificar('cliente vê foto e carteirinha',
+    extrasCliente.status === 200 && extrasCliente.dados.fotos.length === 1 &&
+    extrasCliente.dados.vacinas.length === 1);
+
+  console.log('\nPetshop de teste criado — apagar depois com:');
+  console.log('  DATABASE_URL="..." node scripts/limpar-testes.mjs --aplicar');
+  console.log(`  (e-mail: teste-${sufixo}@safersoftware.com.br)`);
 }
 
 console.log(`\n${falhas ? `${falhas} falha(s).` : 'Tudo certo.'}`);
