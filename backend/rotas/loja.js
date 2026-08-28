@@ -52,7 +52,9 @@ function validarProduto(corpo) {
     fotoValidada = null;                   // apagar a foto
   } else if (typeof foto === 'string') {
     if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(foto)) return null;
-    if (foto.length > LIMITE_FOTO) return 'GRANDE';
+    // Lança em vez de devolver sentinela: um chamador novo não tem como
+    // esquecer de tratar e acabar gravando lixo.
+    if (foto.length > LIMITE_FOTO) throw erroNegocio('Foto muito grande. Tire outra.', 413);
     fotoValidada = foto;
   } else {
     fotoValidada = undefined;              // não mexer na foto atual
@@ -71,7 +73,6 @@ function validarProduto(corpo) {
 router.post('/produtos', somenteAdmin, async (req, res, next) => {
   try {
     const dados = validarProduto(req.body);
-    if (dados === 'GRANDE') return res.status(413).json({ erro: 'Foto muito grande. Tire outra.' });
     if (!dados) return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     const r = await executeQuery(
       `INSERT INTO produtos (empresa_id, nome, descricao, preco_centavos, estoque, controla_estoque, foto)
@@ -82,6 +83,7 @@ router.post('/produtos', somenteAdmin, async (req, res, next) => {
     );
     res.status(201).json(r.recordset[0]);
   } catch (err) {
+    if (err.statusHttp) return res.status(err.statusHttp).json({ erro: err.message });
     next(err);
   }
 });
@@ -90,7 +92,6 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
   try {
     const produtoId = parseInt(req.params.id, 10);
     const dados = validarProduto(req.body);
-    if (dados === 'GRANDE') return res.status(413).json({ erro: 'Foto muito grande. Tire outra.' });
     if (!Number.isInteger(produtoId) || !dados) {
       return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     }
@@ -131,6 +132,7 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
     if (!atualizado) return res.status(404).json({ erro: 'Produto não encontrado.' });
     res.json(atualizado);
   } catch (err) {
+    if (err.statusHttp) return res.status(err.statusHttp).json({ erro: err.message });
     next(err);
   }
 });
