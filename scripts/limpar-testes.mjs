@@ -16,10 +16,28 @@ if (!url) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({
-  connectionString: url,
-  ssl: url.includes('localhost') ? undefined : { rejectUnauthorized: false },
-});
+// Alguns Postgres do Railway (rede interna) recusam SSL; outros exigem.
+// Tenta com SSL e cai para sem, em vez de exigir que quem roda adivinhe.
+async function abrirPool() {
+  const semSsl = url.includes('localhost') || url.includes('.railway.internal');
+  const tentativas = semSsl
+    ? [{}, { ssl: { rejectUnauthorized: false } }]
+    : [{ ssl: { rejectUnauthorized: false } }, {}];
+  let ultimoErro;
+  for (const extra of tentativas) {
+    const candidato = new pg.Pool({ connectionString: url, ...extra });
+    try {
+      await candidato.query('SELECT 1');
+      return candidato;
+    } catch (err) {
+      ultimoErro = err;
+      await candidato.end().catch(() => {});
+    }
+  }
+  throw ultimoErro;
+}
+
+const pool = await abrirPool();
 
 const alvos = await pool.query(
   `SELECT id, nome, criado_em FROM empresas WHERE nome LIKE '%(TESTE)%' ORDER BY id`

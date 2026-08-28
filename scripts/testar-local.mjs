@@ -1168,6 +1168,55 @@ try {
 
   verificar('hub nunca devolve dado de cliente final',
     !JSON.stringify(hub.dados).includes('Mariana') && !JSON.stringify(hub.dados).includes('token_portal'));
+  console.log('\n— Excluir petshop pelo Hub —');
+  {
+    const semSegredo = await fetch(`${base}/api/hub/empresa/2`, { method: 'DELETE' });
+    verificar('excluir sem segredo dá 401', semSegredo.status === 401);
+
+    const inexistente = await fetch(`${base}/api/hub/empresa/99999`, {
+      method: 'DELETE', headers: { 'x-hub-secret': 'hub-de-teste' },
+    });
+    verificar('excluir petshop inexistente dá 404', inexistente.status === 404);
+
+    // Cria um petshop com histórico e apaga.
+    const alvo = await chamar('POST', '/api/auth/registrar', { corpo: {
+      empresa_nome: 'Para Apagar', nome: 'Dono', email: 'apagar@teste.com', senha: 'senha-forte-8',
+    }});
+    const tokenAlvo = alvo.dados.token;
+    const meAlvo = await chamar('GET', '/api/auth/me', { token: tokenAlvo });
+    const idAlvo = meAlvo.dados.empresa.id;
+    const cliAlvo = await chamar('POST', '/api/clientes', { token: tokenAlvo, corpo: { nome: 'Cliente Apagavel' } });
+    await chamar('POST', '/api/pets', { token: tokenAlvo, corpo: { cliente_id: cliAlvo.dados.id, nome: 'Rex Apagavel' } });
+    const servicosAlvo = await chamar('GET', '/api/servicos', { token: tokenAlvo });
+    await chamar('POST', '/api/pacotes', { token: tokenAlvo, corpo: {
+      cliente_id: cliAlvo.dados.id, nome: 'Pacote', valor_centavos: 1000,
+      itens: [{ servico_id: servicosAlvo.dados[0].id, quantidade: 2 }],
+    }});
+
+    const antes = await pool.query('SELECT COUNT(*)::int AS total FROM empresas');
+    const remocao = await fetch(`${base}/api/hub/empresa/${idAlvo}`, {
+      method: 'DELETE', headers: { 'x-hub-secret': 'hub-de-teste' },
+    });
+    const corpoRemocao = await remocao.json();
+    const depois = await pool.query('SELECT COUNT(*)::int AS total FROM empresas');
+    verificar('excluir petshop apaga a empresa e o histórico',
+      remocao.status === 200 && corpoRemocao.ok === true &&
+      depois.rows[0].total === antes.rows[0].total - 1,
+      JSON.stringify(corpoRemocao).slice(0, 200));
+
+    const orfaosCli = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM clientes WHERE nome = 'Cliente Apagavel'`);
+    const orfaosPet = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM pets WHERE nome = 'Rex Apagavel'`);
+    verificar('não sobram registros órfãos do petshop apagado',
+      orfaosCli.rows[0].total === 0 && orfaosPet.rows[0].total === 0,
+      JSON.stringify({ clientes: orfaosCli.rows[0].total, pets: orfaosPet.rows[0].total }));
+
+    const loginApagado = await chamar('POST', '/api/auth/login', { corpo: {
+      email: 'apagar@teste.com', senha: 'senha-forte-8',
+    }});
+    verificar('usuário do petshop apagado não entra mais', loginApagado.status === 401);
+  }
   const saude = await chamar('GET', '/api/health');
   verificar('healthcheck toca o banco', saude.status === 200 && saude.dados.status === 'ok');
 

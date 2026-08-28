@@ -7,7 +7,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { executeQuery } = require('../database');
+const { executeQuery, comTransacao } = require('../database');
 const { HUB_TOKEN } = require('../config/segredos');
 const { planoDe } = require('../config/planos');
 
@@ -147,6 +147,57 @@ router.get('/metrics', async (req, res, next) => {
       },
       usuarios,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Excluir um petshop (do painel super-admin) ────────────────────
+// Destrutivo e sem volta: apaga a empresa e TODO o histórico dela. Só o
+// Hub chama, com o segredo. A ordem respeita as chaves estrangeiras.
+
+const TABELAS_DA_EMPRESA = [
+  'avaliacoes', 'fila_espera', 'vacinas', 'fotos',
+  'pedidos_itens', 'pedidos', 'produtos',
+  'baixas', 'agendamentos', 'pacotes_itens', 'pacotes',
+  'pacotes_modelo_itens', 'pacotes_modelo', 'pagamentos', 'assinaturas',
+  'agenda_excecoes', 'agenda_horarios', 'recursos', 'servicos',
+  'pets', 'clientes', 'usuarios',
+];
+
+router.delete('/empresa/:id', async (req, res, next) => {
+  try {
+    if (!HUB_TOKEN) {
+      return res.status(503).json({ erro: 'Hub não configurado neste ambiente.' });
+    }
+    if (!segredoConfere(segredoDaRequisicao(req))) {
+      return res.status(401).json({ erro: 'Não autorizado.' });
+    }
+
+    const empresaId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(empresaId)) {
+      return res.status(400).json({ erro: 'Identificador inválido.' });
+    }
+
+    const resultado = await comTransacao(async (query) => {
+      const r = await query('SELECT id, nome FROM empresas WHERE id = $1 FOR UPDATE', [empresaId]);
+      const empresa = r.recordset[0];
+      if (!empresa) return null;
+
+      const apagado = {};
+      for (const tabela of TABELAS_DA_EMPRESA) {
+        const del = await query(`DELETE FROM ${tabela} WHERE empresa_id = $1`, [empresaId]);
+        const linhas = del.rowsAffected[0] || 0;
+        if (linhas) apagado[tabela] = linhas;
+      }
+      await query('DELETE FROM empresas WHERE id = $1', [empresaId]);
+
+      console.warn(`[hub] petshop ${empresaId} (${empresa.nome}) excluído com todo o histórico.`);
+      return { id: empresaId, nome: empresa.nome, apagado };
+    });
+
+    if (!resultado) return res.status(404).json({ erro: 'Petshop não encontrado.' });
+    res.json({ ok: true, ...resultado });
   } catch (err) {
     next(err);
   }
