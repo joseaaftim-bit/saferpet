@@ -40,6 +40,13 @@ module.exports = {
   // produção: com fallback, o petshop mandaria link de localhost por WhatsApp.
   APP_URL: obrigatorioEmProducao('APP_URL').replace(/\/+$/, ''),
 
+  // Credenciais do Mercado Pago DA SAFERSOFTWARE, para cobrar a
+  // assinatura dos petshops. Diferente das credenciais de cada petshop
+  // (que cobram o cliente final). Sem elas, a tela de assinatura avisa
+  // que a renovação ainda não está disponível.
+  MP_ACCESS_TOKEN: process.env.MP_ACCESS_TOKEN || null,
+  MP_WEBHOOK_SECRET: process.env.MP_WEBHOOK_SECRET || null,
+
   // Cifra as credenciais de Mercado Pago de cada petshop guardadas no
   // banco. Opcional: sem ela, deriva do JWT_SECRET (que já é forte e
   // secreto) — assim nenhum ambiente quebra por falta de variável nova.

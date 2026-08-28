@@ -5,6 +5,10 @@
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'segredo-dev-memoria';
 process.env.APP_URL = 'http://localhost:4600';
+// Credenciais simuladas da SaferSoftware, para a tela de assinatura ficar
+// completa no ambiente de desenvolvimento.
+process.env.MP_ACCESS_TOKEN = 'APP_USR-simulado-dev';
+process.env.MP_WEBHOOK_SECRET = 'b'.repeat(64);
 
 import { createRequire } from 'module';
 import { readFileSync, readdirSync } from 'fs';

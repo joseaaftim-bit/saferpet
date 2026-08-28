@@ -1478,6 +1478,9 @@
       <div class="rotulo-secao" style="margin-top: 8px">Produtos</div>
       ${produtos.length ? `<div class="lista">${produtos.map(p => `
         <div class="linha" style="${p.ativo ? '' : 'opacity: 0.55'}">
+          ${p.foto
+            ? `<img src="${esc(p.foto)}" alt="" style="width: 48px; height: 48px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">`
+            : '<div class="avatar" style="border-radius: 10px">' + ICONES.pata + '</div>'}
           <div style="flex: 1">
             <div class="linha-titulo">${esc(p.nome)}</div>
             <div class="linha-sub">${formatarReais(p.preco_centavos)}${p.controla_estoque ? ` · ${p.estoque} em estoque` : ' · estoque livre'}${p.descricao ? ` · ${esc(p.descricao)}` : ''}</div>
@@ -1541,6 +1544,17 @@
       <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
         <div class="campo"><label>Nome</label><input name="nome" value="${p ? esc(p.nome) : ''}" placeholder="Ração Premium 10kg" required></div>
         <div class="campo"><label>Descrição</label><textarea name="descricao" rows="2">${p ? esc(p.descricao || '') : ''}</textarea></div>
+        <div class="campo"><label>Foto do produto</label>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <img id="previa-foto" alt="" src="${p && p.foto ? esc(p.foto) : ''}"
+                 style="width: 72px; height: 72px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); ${p && p.foto ? '' : 'display: none'}">
+            <label class="btn-fantasma btn-mini" style="cursor: pointer">
+              ${p && p.foto ? 'Trocar foto' : 'Escolher foto'}
+              <input type="file" id="campo-foto-produto" accept="image/*" style="display: none">
+            </label>
+            ${p && p.foto ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-foto">Remover</button>' : ''}
+          </div>
+        </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
           <div class="campo"><label>Preço (R$)</label><input name="preco" inputmode="decimal" value="${p ? (p.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="250,00" required></div>
           <div class="campo"><label>Estoque</label><input name="estoque" type="number" min="0" step="1" value="${p ? p.estoque : '0'}" required></div>
@@ -1557,6 +1571,27 @@
         ${rodapeModal(p ? 'Salvar' : 'Cadastrar')}
       </form>`);
     ligarFechar(modal);
+
+    // A foto é reduzida no navegador; `fotoEscolhida` guarda o resultado.
+    // undefined = não mexer, null = remover, string = trocar.
+    let fotoEscolhida;
+    const previa = modal.querySelector('#previa-foto');
+    modal.querySelector('#campo-foto-produto').addEventListener('change', async (ev) => {
+      const arquivo = ev.target.files && ev.target.files[0];
+      if (!arquivo) return;
+      try {
+        fotoEscolhida = await reduzirImagem(arquivo);
+        previa.src = fotoEscolhida;
+        previa.style.display = 'block';
+      } catch (err) { toast(err.message, true); }
+    });
+    const botaoTirar = modal.querySelector('#botao-tirar-foto');
+    if (botaoTirar) botaoTirar.addEventListener('click', () => {
+      fotoEscolhida = null;
+      previa.style.display = 'none';
+      toast('A foto sai ao salvar.');
+    });
+
     aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
       const f = new FormData(ev.target);
       const centavos = paraCentavos(f.get('preco'));
@@ -1565,6 +1600,7 @@
         nome: f.get('nome'), descricao: f.get('descricao'),
         preco_centavos: centavos, estoque: parseInt(f.get('estoque'), 10) || 0,
         controla_estoque: f.get('controla_estoque') === 'on',
+        ...(fotoEscolhida !== undefined ? { foto: fotoEscolhida } : {}),
         // O servidor aplica a diferença, para não desfazer venda feita
         // enquanto esta tela estava aberta.
         estoque_visto: p ? p.estoque : undefined,
@@ -1696,6 +1732,20 @@
       }));
   }
 
+  /** Coloca a logo e o nome do petshop no topo do painel. */
+  function aplicarIdentidade() {
+    if (!sessao) return;
+    document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+    const caixa = document.querySelector('.marca-icone');
+    if (!caixa) return;
+    if (sessao.empresa.logo) {
+      caixa.innerHTML = `<img src="${esc(sessao.empresa.logo)}" alt=""
+        style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`;
+      caixa.style.padding = '2px';
+      caixa.style.background = 'var(--bg-panel)';
+    }
+  }
+
   function numeroWhatsApp(telefone) {
     const limpo = String(telefone || '').replace(/\D/g, '');
     if (!limpo) return '';
@@ -1706,7 +1756,9 @@
    * Reduz a foto no próprio navegador antes de enviar: 1200px no maior
    * lado, JPEG 0.72. Uma foto de celular de 4 MB vira ~200 KB.
    */
-  function reduzirImagem(arquivo) {
+  function reduzirImagem(arquivo, ladoMaximo, limiteBytes) {
+    const LADO = ladoMaximo || 1200;
+    const LIMITE = limiteBytes || 700 * 1024;
     return new Promise((resolve, reject) => {
       const leitor = new FileReader();
       leitor.onerror = () => reject(new Error('Não consegui ler a foto.'));
@@ -1715,13 +1767,13 @@
         img.onerror = () => reject(new Error('Arquivo não é uma imagem válida.'));
         img.onload = () => {
           const maior = Math.max(img.width, img.height);
-          const escala = maior > 1200 ? 1200 / maior : 1;
+          const escala = maior > LADO ? LADO / maior : 1;
           const tela = document.createElement('canvas');
           tela.width = Math.round(img.width * escala);
           tela.height = Math.round(img.height * escala);
           tela.getContext('2d').drawImage(img, 0, 0, tela.width, tela.height);
           const dados = tela.toDataURL('image/jpeg', 0.72);
-          if (dados.length > 700 * 1024) {
+          if (dados.length > LIMITE) {
             reject(new Error('Foto muito grande mesmo depois de reduzir. Tente outra.'));
             return;
           }
@@ -1731,6 +1783,111 @@
       };
       leitor.readAsDataURL(arquivo);
     });
+  }
+
+  // ═══ Assinatura (o petshop paga a SaferSoftware) ═════════════════
+
+  const SITUACAO_ASSINATURA = {
+    APROVADO: 'ok', PENDENTE: '', DIVERGENTE: 'alerta',
+    PENDENTE_MANUAL: 'alerta', ERRO: 'alerta',
+  };
+
+  async function verAssinatura() {
+    if (!ehAdmin()) {
+      conteudo.innerHTML = `
+        <div class="cabecalho-pagina"><h2>Assinatura</h2></div>
+        <div class="vazio">Apenas administradores acessam a assinatura.</div>`;
+      return;
+    }
+    const a = await api('/assinatura');
+    const dias = a.dias_restantes;
+    const alerta = !a.vigente || dias <= 7;
+
+    conteudo.innerHTML = `
+      <div class="cabecalho-pagina">
+        <h2>Assinatura</h2>
+        <p>Seu plano do SaferPet</p>
+      </div>
+
+      ${!a.vigente ? `
+        <div class="faixa-aviso">
+          Seu acesso venceu em ${dataLonga(a.acesso_ate)}. Os dados estão guardados —
+          renove abaixo para o petshop voltar a usar o sistema.
+        </div>` : (dias <= 7 ? `
+        <div class="faixa-aviso">
+          Seu acesso vence em ${dias} dia${dias === 1 ? '' : 's'} (${dataLonga(a.acesso_ate)}).
+          Renove para não interromper o atendimento.
+        </div>` : '')}
+
+      <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 12px; max-width: 560px">
+        <div class="rotulo-secao">Situação</div>
+        <div style="display: flex; align-items: baseline; gap: 12px">
+          <div class="kpi-valor" style="color: ${alerta ? 'var(--danger)' : 'var(--success)'}">
+            ${a.vigente ? dias : 0}
+          </div>
+          <div style="color: var(--text-muted)">
+            ${a.vigente ? `dia${dias === 1 ? '' : 's'} de acesso restante${dias === 1 ? '' : 's'}` : 'acesso vencido'}
+          </div>
+        </div>
+        <div class="linha-sub">
+          Plano ${esc(a.plano)} · ${a.vigente ? 'válido até' : 'venceu em'} ${dataLonga(a.acesso_ate)}
+        </div>
+      </div>
+
+      ${a.cobranca_disponivel ? `
+      <div class="rotulo-secao">Renovar</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; max-width: 700px">
+        ${a.planos.map(p => `
+          <div class="cartao" style="padding: 22px; display: flex; flex-direction: column; gap: 12px">
+            <div>
+              <h3 style="font-size: 1.2rem">${esc(p.nome)}</h3>
+              <div class="linha-sub">${esc(p.descricao)}</div>
+            </div>
+            <div style="display: flex; align-items: baseline; gap: 6px">
+              <div style="font-family: var(--fonte-titulo); font-size: 2rem; font-weight: 550">${formatarReais(p.valor_centavos)}</div>
+              <div style="color: var(--text-muted); font-size: 0.85rem">/ ${p.dias === 365 ? 'ano' : 'mês'}</div>
+            </div>
+            <button class="btn-primario" data-pagar="${esc(p.periodo)}" type="button">Pagar com Pix ou cartão</button>
+          </div>`).join('')}
+      </div>
+      <div class="linha-sub" style="max-width: 560px">
+        O pagamento é pelo Mercado Pago. Renovar antes do vencimento SOMA os dias —
+        você não perde o tempo que ainda tem.
+      </div>` : `
+      <div class="vazio">
+        A renovação online ainda não está disponível.<br>
+        Fale com a SaferSoftware para renovar o acesso.
+      </div>`}
+
+      ${a.historico.length ? `
+      <div class="rotulo-secao" style="margin-top: 8px">Histórico</div>
+      <div class="lista">
+        ${a.historico.map(h => `
+          <div class="linha">
+            <div class="linha-data">${dataCurta(h.criado_em)}</div>
+            <div style="flex: 1">
+              <div class="linha-titulo">${esc(h.periodo === 'ANUAL' ? 'Plano anual' : 'Plano mensal')} · ${formatarReais(h.valor_centavos)}</div>
+              <div class="linha-sub">${h.acesso_ate ? `acesso até ${dataLonga(h.acesso_ate)}` : 'aguardando pagamento'}</div>
+            </div>
+            <span class="chip ${SITUACAO_ASSINATURA[h.status] || ''}">${esc(h.status)}</span>
+          </div>`).join('')}
+      </div>` : ''}`;
+
+    conteudo.querySelectorAll('[data-pagar]').forEach(b =>
+      b.addEventListener('click', async () => {
+        if (b.disabled) return;
+        b.disabled = true;
+        b.textContent = 'Abrindo pagamento…';
+        try {
+          const r = await api('/assinatura/pagar', { method: 'POST', body: { periodo: b.dataset.pagar } });
+          if (!r.url) throw new Error('Não foi possível abrir o pagamento.');
+          window.location.href = r.url;
+        } catch (err) {
+          toast(err.message, true);
+          b.disabled = false;
+          b.textContent = 'Pagar com Pix ou cartão';
+        }
+      }));
   }
 
   // ═══ Configurações ═══════════════════════════════════════════════
@@ -1777,6 +1934,18 @@
               <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
               <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
                 <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
+              <div class="campo"><label>Logo do petshop</label>
+                <div style="display: flex; align-items: center; gap: 12px">
+                  <img id="previa-logo" alt="" src="${emp.logo ? esc(emp.logo) : ''}"
+                       style="width: 64px; height: 64px; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); padding: 4px; ${emp.logo ? '' : 'display: none'}">
+                  <label class="btn-fantasma btn-mini" style="cursor: pointer">
+                    ${emp.logo ? 'Trocar logo' : 'Escolher logo'}
+                    <input type="file" id="campo-logo" accept="image/*" style="display: none">
+                  </label>
+                  ${emp.logo ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-logo">Remover</button>' : ''}
+                </div>
+                <div class="linha-sub" style="margin-top: 4px">Aparece no aplicativo do cliente e aqui no topo.</div>
+              </div>
               <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
                 <input type="checkbox" name="aceita_online" ${emp.aceita_online ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
                 Deixar o cliente agendar e comprar pelo aplicativo
@@ -1909,7 +2078,26 @@
         </div>
       </div>`;
 
-    // Dados do petshop
+    // Dados do petshop (com a logo)
+    let logoEscolhida;  // undefined = não mexer, null = remover, string = trocar
+    const previaLogo = document.getElementById('previa-logo');
+    document.getElementById('campo-logo').addEventListener('change', async (ev) => {
+      const arquivo = ev.target.files && ev.target.files[0];
+      if (!arquivo) return;
+      try {
+        // Logo é menor que foto de produto: 400px basta e fica leve.
+        logoEscolhida = await reduzirImagem(arquivo, 400, 400 * 1024);
+        previaLogo.src = logoEscolhida;
+        previaLogo.style.display = 'block';
+      } catch (err) { toast(err.message, true); }
+    });
+    const botaoTirarLogo = document.getElementById('botao-tirar-logo');
+    if (botaoTirarLogo) botaoTirarLogo.addEventListener('click', () => {
+      logoEscolhida = null;
+      previaLogo.style.display = 'none';
+      toast('A logo sai ao salvar.');
+    });
+
     document.getElementById('form-empresa').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const f = new FormData(ev.target);
@@ -1917,10 +2105,12 @@
         await api('/empresa', { method: 'PUT', body: {
           nome: f.get('nome'), whatsapp: f.get('whatsapp'),
           aceita_online: f.get('aceita_online') === 'on',
+          ...(logoEscolhida !== undefined ? { logo: logoEscolhida } : {}),
         }});
         toast('Dados salvos.');
         await carregarSessao();
-        document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+        aplicarIdentidade();
+        verConfig();
       } catch (err) { toast(err.message, true); }
     });
 
@@ -1948,7 +2138,7 @@
         }});
         toast('Loja atualizada.');
         await carregarSessao();
-        document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+        aplicarIdentidade();
         verConfig();
       } catch (err) { toast(err.message, true); }
     });
@@ -2170,6 +2360,7 @@
       else if (rota === 'loja') await verLoja();
       else if (rota === 'catalogo') await verCatalogo();
       else if (rota === 'relatorios') await verRelatorios();
+      else if (rota === 'assinatura') await verAssinatura();
       else if (rota === 'config') await verConfig();
       else await verVisao();
     } catch (err) {
@@ -2195,7 +2386,7 @@
   } else {
     carregarSessao()
       .then(() => {
-        document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+        aplicarIdentidade();
         renderizar();
       })
       .catch(() => sair());

@@ -14,6 +14,8 @@ const { primeiroEncaixe, agoraHHMMSaoPaulo } = require('../util/agenda');
 const router = express.Router();
 
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+// ~700 KB de base64 (a foto é reduzida no navegador antes de subir).
+const LIMITE_FOTO = 700 * 1024;
 
 function erroNegocio(mensagem, statusHttp) {
   return Object.assign(new Error(mensagem), { statusHttp });
@@ -24,7 +26,7 @@ function erroNegocio(mensagem, statusHttp) {
 router.get('/produtos', async (req, res, next) => {
   try {
     const r = await executeQuery(
-      `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo
+      `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto
          FROM produtos WHERE empresa_id = $1 ORDER BY nome`,
       [req.usuario.empresa_id]
     );
@@ -42,24 +44,41 @@ function validarProduto(corpo) {
       !Number.isInteger(estoque) || estoque < 0) {
     return null;
   }
+  // Foto opcional. Vem reduzida do navegador; o limite é imposto aqui
+  // porque o navegador do cliente não é confiável.
+  const foto = (corpo || {}).foto;
+  let fotoValidada;
+  if (foto === null || foto === '') {
+    fotoValidada = null;                   // apagar a foto
+  } else if (typeof foto === 'string') {
+    if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(foto)) return null;
+    if (foto.length > LIMITE_FOTO) return 'GRANDE';
+    fotoValidada = foto;
+  } else {
+    fotoValidada = undefined;              // não mexer na foto atual
+  }
+
   return {
     nome: nome.slice(0, 120),
     descricao: String((corpo || {}).descricao || '').trim().slice(0, 500) || null,
     preco,
     estoque,
     controlaEstoque: (corpo || {}).controla_estoque !== false,
+    foto: fotoValidada,
   };
 }
 
 router.post('/produtos', somenteAdmin, async (req, res, next) => {
   try {
     const dados = validarProduto(req.body);
+    if (dados === 'GRANDE') return res.status(413).json({ erro: 'Foto muito grande. Tire outra.' });
     if (!dados) return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     const r = await executeQuery(
-      `INSERT INTO produtos (empresa_id, nome, descricao, preco_centavos, estoque, controla_estoque)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo`,
-      [req.usuario.empresa_id, dados.nome, dados.descricao, dados.preco, dados.estoque, dados.controlaEstoque]
+      `INSERT INTO produtos (empresa_id, nome, descricao, preco_centavos, estoque, controla_estoque, foto)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto`,
+      [req.usuario.empresa_id, dados.nome, dados.descricao, dados.preco, dados.estoque,
+       dados.controlaEstoque, dados.foto || null]
     );
     res.status(201).json(r.recordset[0]);
   } catch (err) {
@@ -71,6 +90,7 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
   try {
     const produtoId = parseInt(req.params.id, 10);
     const dados = validarProduto(req.body);
+    if (dados === 'GRANDE') return res.status(413).json({ erro: 'Foto muito grande. Tire outra.' });
     if (!Number.isInteger(produtoId) || !dados) {
       return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     }
@@ -97,11 +117,13 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
 
       const up = await query(
         `UPDATE produtos SET nome = $1, descricao = $2, preco_centavos = $3,
-                estoque = $4, controla_estoque = $5, ativo = COALESCE($6, ativo)
-          WHERE id = $7 AND empresa_id = $8
-          RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo`,
+                estoque = $4, controla_estoque = $5, ativo = COALESCE($6, ativo),
+                foto = CASE WHEN $7::boolean THEN $8 ELSE foto END
+          WHERE id = $9 AND empresa_id = $10
+          RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto`,
         [dados.nome, dados.descricao, dados.preco, novoEstoque, dados.controlaEstoque,
-         ativo, produtoId, empresaId]
+         ativo, dados.foto !== undefined, dados.foto === undefined ? null : dados.foto,
+         produtoId, empresaId]
       );
       return up.recordset[0];
     });

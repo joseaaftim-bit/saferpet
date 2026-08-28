@@ -35,8 +35,10 @@ function iniciarJobs() {
       const pagamentos = require('../rotas/pagamentos');
       // Reconciliar ANTES de expirar: um pagamento que chegou sem webhook
       // não pode ter o pedido cancelado embaixo dele.
+      const assinatura = require('../rotas/assinatura');
       pagamentos.reconciliarPendentes()
         .then(() => pagamentos.expirarPedidosAbandonados())
+        .then(() => assinatura.reconciliarAssinaturas())
         .catch(err => console.error('[jobs] Falha no ciclo de pagamentos:', err.message));
     }, { timezone: 'America/Sao_Paulo' })
   );

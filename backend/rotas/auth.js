@@ -174,6 +174,7 @@ router.get('/me', validarJwt, (req, res) => {
       id: req.empresa.id,
       nome: req.empresa.nome,
       whatsapp: req.empresa.whatsapp,
+      logo: req.empresa.logo,
       plano: req.empresa.plano,
       acesso_ate: req.empresa.acesso_ate,
       acesso_vigente: new Date(req.empresa.acesso_ate).getTime() >= Date.now(),

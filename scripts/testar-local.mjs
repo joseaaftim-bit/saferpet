@@ -1021,9 +1021,105 @@ try {
       saldoAposCruzado === saldoAntesCruzado && compraB.status === 201);
   }
 
+  console.log('\n— Foto de produto e logo do petshop —');
+  {
+    const pixelGrande = 'data:image/png;base64,' + 'A'.repeat(720 * 1024);
+    const fotoRuim = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: 'javascript:alert(1)',
+    }});
+    verificar('foto de produto que não é imagem é recusada', fotoRuim.status === 400);
+
+    const fotoGrande = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: pixelGrande,
+    }});
+    verificar('foto de produto acima do limite dá 413', fotoGrande.status === 413);
+
+    const comFoto = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: pixel,
+    }});
+    verificar('produto aceita foto', comFoto.status === 200 && comFoto.dados.foto === pixel);
+
+    const semMexer = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3,
+    }});
+    verificar('salvar sem mandar foto preserva a foto atual', semMexer.dados.foto === pixel);
+
+    const vitrine = await chamar('GET', `/api/portal/${cli.dados.token_portal}`);
+    const prod = vitrine.dados.produtos.find(x => x.id === produto.dados.id);
+    verificar('cliente vê a foto do produto na vitrine', prod && prod.foto === pixel);
+
+    const tirouFoto = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: null,
+    }});
+    verificar('mandar foto nula remove a foto', tirouFoto.dados.foto === null);
+
+    const logoRuim = await chamar('PUT', '/api/empresa', { token: tokenA, corpo: {
+      nome: 'Salva Patas', logo: 'nao-e-imagem',
+    }});
+    verificar('logo inválida é recusada', logoRuim.status === 400);
+
+    await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas', logo: pixel } });
+    const empComLogo = await chamar('GET', '/api/empresa', { token: tokenA });
+    const portalComLogo = await chamar('GET', `/api/portal/${cli.dados.token_portal}`);
+    const meComLogo = await chamar('GET', '/api/auth/me', { token: tokenA });
+    verificar('logo salva aparece no painel, no /me e no app do cliente',
+      empComLogo.dados.logo === pixel && meComLogo.dados.empresa.logo === pixel &&
+      portalComLogo.dados.petshop.logo === pixel);
+
+    await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas' } });
+    const aindaTemLogo = await chamar('GET', '/api/empresa', { token: tokenA });
+    verificar('salvar sem mandar logo preserva a logo', aindaTemLogo.dados.logo === pixel);
+  }
+
+  console.log('\n— Assinatura do petshop (cobrança da SaferSoftware) —');
+  {
+    const situacao = await chamar('GET', '/api/assinatura', { token: tokenA });
+    verificar('tela de assinatura traz planos e dias restantes',
+      situacao.status === 200 && situacao.dados.planos.length === 2 &&
+      Number.isInteger(situacao.dados.dias_restantes) && situacao.dados.vigente === true,
+      JSON.stringify({ planos: situacao.dados.planos && situacao.dados.planos.length, dias: situacao.dados.dias_restantes }));
+
+    const negadaAtendente = await chamar('GET', '/api/assinatura', { token: tokenAt });
+    verificar('atendente não vê a assinatura (403)', negadaAtendente.status === 403);
+
+    const webhookFechado = await fetch(`${base}/api/assinatura/webhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'payment', data: { id: '1' } }),
+    });
+    verificar('webhook da assinatura sem segredo global responde 503', webhookFechado.status === 503);
+
+    const cobrancaIndisponivel = await chamar('POST', '/api/assinatura/pagar', { token: tokenA, corpo: { periodo: 'MENSAL' } });
+    verificar('sem credencial global, a renovação avisa em vez de quebrar',
+      cobrancaIndisponivel.status === 503, JSON.stringify(cobrancaIndisponivel.dados));
+
+    const planos = require(path.join(raiz, 'backend', 'config', 'planos.js'));
+    verificar('tabela de preços do servidor tem mensal e anual',
+      planos.planoDe('MENSAL').dias === 30 && planos.planoDe('ANUAL').dias === 365 &&
+      planos.planoDe('inexistente') === null);
+  }
+
   console.log('\n— Hub, saúde e limites —');
   const hub = await chamar('GET', '/api/hub/metrics', { token: 'hub-de-teste' });
-  verificar('hub com token certo traz métricas', hub.status === 200 && hub.dados.empresas >= 2);
+  verificar('hub com token certo traz métricas no contrato do Safer Hub',
+    hub.status === 200 && hub.dados.produto === 'SaferPet' &&
+    hub.dados.kpis && Number.isInteger(hub.dados.kpis.total) &&
+    typeof hub.dados.kpis.mrr === 'number' &&
+    Array.isArray(hub.dados.usuarios) && hub.dados.usuarios.length >= 2,
+    JSON.stringify(hub.dados.kpis));
+
+  const hubHeader = await fetch(`${base}/api/hub/metrics`, { headers: { 'x-hub-secret': 'hub-de-teste' } });
+  verificar('hub aceita o header x-hub-secret que o painel manda', hubHeader.status === 200);
+
+  const hubHeaderErrado = await fetch(`${base}/api/hub/metrics`, { headers: { 'x-hub-secret': 'errado' } });
+  verificar('x-hub-secret errado dá 401', hubHeaderErrado.status === 401);
+
+  verificar('hub separa trial de pagante e traz a operação',
+    hub.dados.kpis.emTrial >= 1 && hub.dados.kpis.ativos === 0 &&
+    hub.dados.operacao && Number.isInteger(hub.dados.operacao.clientes),
+    JSON.stringify({ trial: hub.dados.kpis.emTrial, ativos: hub.dados.kpis.ativos, op: hub.dados.operacao }));
+
+  verificar('hub nunca devolve dado de cliente final',
+    !JSON.stringify(hub.dados).includes('Mariana') && !JSON.stringify(hub.dados).includes('token_portal'));
   const saude = await chamar('GET', '/api/health');
   verificar('healthcheck toca o banco', saude.status === 200 && saude.dados.status === 'ok');
 

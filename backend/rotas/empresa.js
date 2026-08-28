@@ -20,7 +20,7 @@ router.get('/', somenteAdmin, async (req, res, next) => {
         [req.usuario.empresa_id]),
       executeQuery(
         `SELECT aceita_online, mp_access_token, mp_webhook_secret,
-                vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos
+                vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos, logo
            FROM empresas WHERE id = $1`,
         [req.usuario.empresa_id]),
     ]);
@@ -32,6 +32,7 @@ router.get('/', somenteAdmin, async (req, res, next) => {
       plano: req.empresa.plano,
       acesso_ate: req.empresa.acesso_ate,
       aceita_online: !!c.aceita_online,
+      logo: c.logo || null,
       vende_produtos: !!c.vende_produtos,
       taxa_entrega_centavos: c.taxa_entrega_centavos || 0,
       entrega_gratis_acima_centavos: c.entrega_gratis_acima_centavos,
@@ -49,9 +50,23 @@ router.get('/', somenteAdmin, async (req, res, next) => {
 router.put('/', somenteAdmin, async (req, res, next) => {
   try {
     const { nome, whatsapp, aceita_online, vende_produtos,
-            taxa_entrega_centavos, entrega_gratis_acima_centavos } = req.body || {};
+            taxa_entrega_centavos, entrega_gratis_acima_centavos, logo } = req.body || {};
     if (!nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Informe o nome do petshop.' });
+    }
+
+    // Logo: reduzida no navegador, mas o limite vale no servidor.
+    let logoValidada;
+    if (logo === null || logo === '') {
+      logoValidada = null;
+    } else if (typeof logo === 'string') {
+      if (!/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(logo)) {
+        return res.status(400).json({ erro: 'Imagem da logo inválida.' });
+      }
+      if (logo.length > 400 * 1024) {
+        return res.status(413).json({ erro: 'Logo muito grande. Use uma imagem menor.' });
+      }
+      logoValidada = logo;
     }
 
     const taxa = taxa_entrega_centavos === undefined ? null : parseInt(taxa_entrega_centavos, 10);
@@ -72,13 +87,15 @@ router.put('/', somenteAdmin, async (req, res, next) => {
               vende_produtos = COALESCE($4, vende_produtos),
               taxa_entrega_centavos = COALESCE($5, taxa_entrega_centavos),
               entrega_gratis_acima_centavos = CASE WHEN $6::boolean THEN $7::int
-                                                   ELSE entrega_gratis_acima_centavos END
-        WHERE id = $8`,
+                                                   ELSE entrega_gratis_acima_centavos END,
+              logo = CASE WHEN $8::boolean THEN $9 ELSE logo END
+        WHERE id = $10`,
       [String(nome).trim(), String(whatsapp || '').trim() || null,
        typeof aceita_online === 'boolean' ? aceita_online : null,
        typeof vende_produtos === 'boolean' ? vende_produtos : null,
        taxa,
        gratisAcima !== undefined, gratisAcima === undefined ? null : gratisAcima,
+       logoValidada !== undefined, logoValidada === undefined ? null : logoValidada,
        req.usuario.empresa_id]
     );
     res.json({ ok: true });

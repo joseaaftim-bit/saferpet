@@ -29,6 +29,7 @@ app.use('/api/auth', require('./rotas/auth'));
 app.use('/api/portal', require('./rotas/portal'));
 app.use('/api/pagamentos', require('./rotas/pagamentos'));
 app.use('/api/hub', require('./rotas/hub'));
+app.use('/api/assinatura', require('./rotas/assinatura'));
 
 // Rotas de negócio: autenticado + acesso do petshop vigente.
 const protegido = [validarJwt, exigirAcessoVigente];

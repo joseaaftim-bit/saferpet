@@ -137,7 +137,11 @@
 
     raiz.innerHTML = `
       <div style="display: flex; align-items: center; gap: 12px">
-        <div class="marca-icone" style="width: 44px; height: 44px">${PATA}</div>
+        <div class="marca-icone" style="width: 44px; height: 44px; ${dados.petshop.logo ? 'padding: 2px; background: var(--bg-panel)' : ''}">
+          ${dados.petshop.logo
+            ? `<img src="${esc(dados.petshop.logo)}" alt="" style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`
+            : PATA}
+        </div>
         <div>
           <div class="marca-nome" style="font-size: 1.35rem">${esc(dados.petshop.nome)}</div>
           <div class="marca-empresa">Olá, ${esc(dados.cliente.nome)}</div>
@@ -542,6 +546,7 @@
       <div style="display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto">
         ${produtos.map(p => `
           <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 12px">
+            ${p.foto ? `<img src="${esc(p.foto)}" alt="" style="width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">` : ''}
             <div style="flex: 1; min-width: 0">
               <div style="font-size: 0.9rem; font-weight: 600">${esc(p.nome)}</div>
               <div style="font-size: 0.76rem; color: var(--text-muted)">

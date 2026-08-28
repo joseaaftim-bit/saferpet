@@ -39,7 +39,7 @@ async function resolverToken(token) {
     `SELECT c.id, c.nome, c.telefone, c.email, c.endereco, c.empresa_id,
             e.nome AS petshop_nome, e.whatsapp AS petshop_whatsapp,
             e.acesso_ate, e.ativo AS empresa_ativa, e.aceita_online,
-            e.mp_access_token, e.mp_webhook_secret
+            e.mp_access_token, e.mp_webhook_secret, e.logo
        FROM clientes c
        JOIN empresas e ON e.id = c.empresa_id
       WHERE c.token_portal = $1 AND c.ativo`,
@@ -113,7 +113,7 @@ router.get('/:token', async (req, res, next) => {
           WHERE empresa_id = $1 AND ativo AND valor_centavos > 0 ORDER BY valor_centavos`,
         [cliente.empresa_id]),
       executeQuery(
-        `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque
+        `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, foto
            FROM produtos WHERE empresa_id = $1 AND ativo ORDER BY nome`,
         [cliente.empresa_id]),
       executeQuery(
@@ -172,6 +172,7 @@ router.get('/:token', async (req, res, next) => {
       petshop: {
         nome: cliente.petshop_nome,
         whatsapp: cliente.petshop_whatsapp,
+        logo: cliente.logo || null,
         aceita_online: !!cliente.aceita_online,
         // Pagar exige as DUAS credenciais: sem o segredo do webhook o
         // dinheiro sai e o crédito nunca entra.

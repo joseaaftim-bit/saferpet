@@ -62,7 +62,11 @@ Monorepo de origem única, sem build step:
 | `JWT_SECRET` | sim | 48+ bytes aleatórios. Sem ela o boot **aborta** em produção. |
 | `NODE_ENV` | sim | `production` |
 | `APP_URL` | sim | `https://pet.safersoftware.com.br` (monta o link do portal) |
-| `HUB_TOKEN` | não | Token para o Safer Hub ler `/api/hub/metrics`. Sem ela a rota responde 503. |
+| `HUB_TOKEN` | não | Segredo do Safer Hub em `/api/hub/metrics` (aceita `x-hub-secret` ou Bearer). Sem ela a rota responde 503. |
+| `MP_ACCESS_TOKEN` | não | Access token do Mercado Pago **da SaferSoftware**, para cobrar a assinatura dos petshops. Sem ele a tela de assinatura avisa que a renovação não está disponível. |
+| `MP_WEBHOOK_SECRET` | não | Chave secreta do webhook da assinatura. Sem ela o webhook responde 503. |
+| `PRECO_MENSAL_CENTAVOS` | não | Mensalidade (padrão 14900 = R$ 149,00). |
+| `PRECO_ANUAL_CENTAVOS` | não | Anuidade (padrão 149000 = R$ 1.490,00). |
 | `CRIPTO_CHAVE` | não | 32 bytes em hex. Cifra as credenciais de Mercado Pago dos petshops. Sem ela, deriva do `JWT_SECRET` — **trocar o `JWT_SECRET` invalida as credenciais salvas** (cada petshop recadastra). |
 | `TRIAL_DIAS` | não | Dias de teste ao criar petshop (padrão 14). |
 | `DATABASE_SSL` | não | `true` só se usar a URL pública do Postgres. |
@@ -120,6 +124,13 @@ node scripts/testar-api.mjs https://pet.safersoftware.com.br
   regenerar (invalida o link antigo). Sem pagamento online no v1 — não há
   webhook exposto.
 
+## Duas cobranças diferentes (não confundir)
+
+| Quem paga | Para quem | Credenciais | Onde |
+|---|---|---|---|
+| Cliente do petshop | **Petshop** | de cada empresa, cifradas no banco (Configurações) | pacotes e produtos no app do cliente |
+| Petshop | **SaferSoftware** | globais (`MP_ACCESS_TOKEN`/`MP_WEBHOOK_SECRET`) | aba Assinatura |
+
 ## O que está pronto
 
 - **Fase 1** — serviços com duração, pacotes com créditos por serviço, agenda
@@ -130,11 +141,19 @@ node scripts/testar-api.mjs https://pet.safersoftware.com.br
   entra na rota do veículo, painel de pedidos.
 - **Fase 4** — foto do pet pronto, carteirinha de vacinação com lembrete de
   reforço, fila de encaixe, avaliação pós-atendimento, relatórios do dono.
+- **Assinatura** — mensal e anual pelo Mercado Pago da SaferSoftware, com
+  tabela de preços no servidor, webhook fechado por padrão e renovação que
+  SOMA os dias restantes. Aviso de vencimento no painel.
+- **Identidade** — logo do petshop (Configurações) no topo do painel e no app
+  do cliente; foto nos produtos da loja.
+- **Safer Hub** — `/api/hub/metrics` no contrato do painel (kpis com MRR,
+  trial e conversão, mais a operação dos petshops e a lista de empresas).
 
 ## Roadmap
 
-- Assinatura recorrente (plano mensal com horário fixo).
+- Assinatura recorrente do CLIENTE (plano mensal com horário fixo de banho).
 - Avisos automáticos no WhatsApp (hoje os links são montados para envio manual).
+- Cobrança automática da mensalidade (hoje o petshop renova clicando).
 - Plugar no Safer Hub (rota `/api/hub/metrics` já pronta, falta o card no Hub).
 
 ## Armadilhas conhecidas (leia antes de mexer)
