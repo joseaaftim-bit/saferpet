@@ -8,7 +8,8 @@
   const areaModal = document.getElementById('area-modal');
   const areaToast = document.getElementById('area-toast');
 
-  let sessao = null; // { usuario, empresa } vindo de /api/auth/me
+  let sessao = null;          // { usuario, empresa } vindo de /api/auth/me
+  let servicosCache = null;   // catálogo de serviços (invalidado ao editar)
 
   // ─── Utilitários ─────────────────────────────────────────────────
 
@@ -18,9 +19,23 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function dataCurta(iso) {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  function hojeISO() {
+    return new Date().toLocaleDateString('sv-SE');
+  }
+
+  function somarDiasISO(iso, n) {
+    const d = new Date(`${iso}T12:00:00`);
+    d.setDate(d.getDate() + n);
+    return d.toLocaleDateString('sv-SE');
+  }
+
+  function dataCurta(valor) {
+    if (!valor) return '—';
+    const texto = String(valor);
+    // Data pura ('AAAA-MM-DD') ancora ao meio-dia local — senão o fuso
+    // empurra para o dia anterior.
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(texto) ? new Date(`${texto}T12:00:00`) : new Date(valor);
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   }
 
   function dataLonga(iso) {
@@ -28,9 +43,20 @@
     return new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR');
   }
 
+  function dataExtensa(iso) {
+    return new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR', {
+      weekday: 'long', day: '2-digit', month: '2-digit',
+    });
+  }
+
   function horaCurta(iso) {
     if (!iso) return '';
     return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function paraMin(hhmm) {
+    const [h, m] = String(hhmm).split(':').map(Number);
+    return h * 60 + m;
   }
 
   function formatarReais(centavos) {
@@ -48,7 +74,7 @@
     el.className = 'toast' + (ehErro ? ' erro' : '');
     el.textContent = texto;
     areaToast.appendChild(el);
-    setTimeout(() => el.remove(), 3500);
+    setTimeout(() => el.remove(), 4000);
   }
 
   function sair() {
@@ -74,6 +100,11 @@
       throw err;
     }
     return dados;
+  }
+
+  async function carregarServicos(forcar) {
+    if (!servicosCache || forcar) servicosCache = await api('/servicos');
+    return servicosCache;
   }
 
   function ehAdmin() {
@@ -108,7 +139,21 @@
     modal.querySelectorAll('[data-fechar]').forEach(b => b.addEventListener('click', fecharModal));
   }
 
-  // ─── Barra de saldo ──────────────────────────────────────────────
+  // Protege contra duplo clique: desabilita o botão de envio enquanto a
+  // requisição roda (no sucesso o modal fecha; no erro, reabilita).
+  function aoEnviar(form, handler) {
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const botao = form.querySelector('[type="submit"]');
+      if (botao && botao.disabled) return;
+      if (botao) botao.disabled = true;
+      try {
+        await handler(ev);
+      } finally {
+        if (botao) botao.disabled = false;
+      }
+    });
+  }
 
   function barraSaldo(saldo, total, largura) {
     const pct = total > 0 ? Math.round((saldo / total) * 100) : 0;
@@ -116,63 +161,386 @@
     return `<div class="barra" style="width: ${largura || 130}px"><div class="${classe}" style="width: ${pct}%"></div></div>`;
   }
 
-  // ─── Visão geral ─────────────────────────────────────────────────
-
   const ICONES = {
     banho: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5c3.2 3.9 6 7.2 6 10.2a6 6 0 0 1-12 0c0-3 2.8-6.3 6-10.2z"></path></svg>',
     pata: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>',
     alerta: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5v5.5"></path><path d="M12 16.4v.1"></path></svg>',
-    pessoas: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"></path><path d="M16 5.2a3.5 3.5 0 0 1 0 5.6"></path><path d="M18.5 14.5c1.9 1 3 2.9 3 5.5"></path></svg>',
+    agenda: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="16" rx="2.5"></rect><path d="M8 3v4"></path><path d="M16 3v4"></path><path d="M3.5 10h17"></path></svg>',
+    van: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7h11v10h-11z"></path><path d="M13.5 10h4.2l3 3.2V17h-7.2"></path><circle cx="6.5" cy="17.5" r="1.8"></circle><circle cx="17" cy="17.5" r="1.8"></circle></svg>',
   };
 
+  // ─── Créditos por serviço (a partir da ficha) ────────────────────
+
+  function creditosDisponiveis(ficha) {
+    const hoje = hojeISO();
+    const totais = new Map(); // servico_id -> { nome, total }
+    for (const p of ficha.pacotes || []) {
+      if (p.status !== 'ATIVO') continue;
+      if (p.validade_ate && String(p.validade_ate).slice(0, 10) < hoje) continue;
+      for (const item of p.itens || []) {
+        if (!item.saldo) continue;
+        const atual = totais.get(item.servico_id) || { nome: item.servico_nome, total: 0 };
+        atual.total += item.saldo;
+        totais.set(item.servico_id, atual);
+      }
+    }
+    return totais;
+  }
+
+  function pacoteEmConsumo(pacotes) {
+    const ativos = (pacotes || []).filter(p => p.status === 'ATIVO');
+    return ativos.length ? ativos[ativos.length - 1] : null;
+  }
+
+  // ═══ Visão geral ═════════════════════════════════════════════════
+
   async function verVisao() {
-    const [kpis, recentes] = await Promise.all([api('/dashboard'), api('/baixas/recentes?limite=12')]);
+    const hoje = hojeISO();
+    const [kpis, dia, recentes] = await Promise.all([
+      api('/dashboard'),
+      api(`/agenda/dia?data=${hoje}`),
+      api('/baixas/recentes?limite=8'),
+    ]);
+
+    const agendaHoje = dia.agendamentos.filter(a => a.status === 'AGENDADO');
+    const NOME_TIPO = { SERVICO: '', BUSCA: 'Buscar — ', ENTREGA: 'Entregar — ' };
 
     conteudo.innerHTML = `
       <div class="cabecalho-pagina">
         <h2>Visão geral</h2>
-        <p>${esc(sessao.empresa.nome)} — hoje</p>
+        <p>${esc(sessao.empresa.nome)} — ${dataExtensa(hoje)}</p>
       </div>
       <div class="kpis">
         <div class="cartao kpi">
-          <div class="kpi-icone">${ICONES.banho}</div>
-          <div><div class="kpi-rotulo">Banhos hoje</div><div class="kpi-valor">${kpis.banhos_hoje}</div></div>
+          <div class="kpi-icone">${ICONES.agenda}</div>
+          <div><div class="kpi-rotulo">Agendados hoje</div><div class="kpi-valor">${kpis.agendados_hoje}</div></div>
         </div>
         <div class="cartao kpi">
-          <div class="kpi-icone">${ICONES.pata}</div>
-          <div><div class="kpi-rotulo">Pacotes ativos</div><div class="kpi-valor">${kpis.pacotes_ativos}</div></div>
+          <div class="kpi-icone">${ICONES.van}</div>
+          <div><div class="kpi-rotulo">Buscas e entregas</div><div class="kpi-valor">${kpis.retiradas_hoje}</div></div>
+        </div>
+        <div class="cartao kpi">
+          <div class="kpi-icone">${ICONES.banho}</div>
+          <div><div class="kpi-rotulo">Créditos usados hoje</div><div class="kpi-valor">${kpis.banhos_hoje}</div></div>
         </div>
         <div class="cartao kpi">
           <div class="kpi-icone" style="color: var(--danger)">${ICONES.alerta}</div>
           <div><div class="kpi-rotulo">Saldos acabando</div><div class="kpi-valor" style="color: ${kpis.saldos_acabando > 0 ? 'var(--danger)' : 'var(--text-main)'}">${kpis.saldos_acabando}</div></div>
         </div>
-        <div class="cartao kpi">
-          <div class="kpi-icone">${ICONES.pessoas}</div>
-          <div><div class="kpi-rotulo">Clientes</div><div class="kpi-valor">${kpis.clientes_ativos}</div></div>
-        </div>
       </div>
-      <div>
-        <div class="rotulo-secao" style="margin-bottom: 12px">Últimas baixas</div>
-        ${recentes.length ? `<div class="lista">${recentes.map(b => `
-          <div class="linha">
-            <div class="linha-data">${dataCurta(b.registrado_em)}</div>
-            <div style="flex: 1">
-              <div class="linha-titulo" style="${b.estornada ? 'text-decoration: line-through; color: var(--text-subtle)' : ''}">
-                ${b.pet_nome ? esc(b.pet_nome) + ' · ' : ''}${esc(b.servico)}
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px">
+            <div class="rotulo-secao">Agenda de hoje</div>
+            <a class="btn-fantasma btn-mini" href="#/agenda" style="text-decoration: none">Abrir agenda</a>
+          </div>
+          ${agendaHoje.length ? `<div class="lista">${agendaHoje.map(a => `
+            <div class="linha">
+              <div class="linha-data" style="min-width: 52px">${a.inicio}</div>
+              <div style="flex: 1">
+                <div class="linha-titulo">${esc(NOME_TIPO[a.tipo] || '')}${esc(a.cliente_nome)}</div>
+                <div class="linha-sub">${a.pet_nome ? esc(a.pet_nome) + ' · ' : ''}${esc(a.servico_nome || '')}</div>
               </div>
-              <div class="linha-sub">
-                <a href="#/cliente/${b.cliente_id}">${esc(b.cliente_nome)}</a>
-                · por ${esc(b.registrado_por_nome)} às ${horaCurta(b.registrado_em)}
-                ${b.estornada ? ' · estornada' : ''}
+              ${a.tipo !== 'SERVICO' ? '<span class="chip acento">Leva-e-traz</span>' : ''}
+            </div>`).join('')}</div>`
+          : '<div class="vazio">Nada agendado para hoje.</div>'}
+        </div>
+        <div>
+          <div class="rotulo-secao" style="margin-bottom: 12px">Últimas baixas</div>
+          ${recentes.length ? `<div class="lista">${recentes.map(b => `
+            <div class="linha">
+              <div class="linha-data">${dataCurta(b.registrado_em)}</div>
+              <div style="flex: 1">
+                <div class="linha-titulo" style="${b.estornada ? 'text-decoration: line-through; color: var(--text-subtle)' : ''}">
+                  ${b.pet_nome ? esc(b.pet_nome) + ' · ' : ''}${esc(b.servico)}
+                </div>
+                <div class="linha-sub">
+                  <a href="#/cliente/${b.cliente_id}">${esc(b.cliente_nome)}</a>
+                  · ${horaCurta(b.registrado_em)}${b.estornada ? ' · estornada' : ''}
+                </div>
               </div>
-            </div>
-            ${b.estornada ? '<span class="chip">Estornada</span>' : `<span class="chip acento">Restou ${b.saldo_apos}</span>`}
-          </div>`).join('')}</div>`
-        : '<div class="vazio">Nenhuma baixa registrada ainda.<br>Cadastre um cliente, venda um pacote e registre o primeiro banho.</div>'}
+              ${b.estornada ? '<span class="chip">Estornada</span>' : `<span class="chip acento">Restou ${b.saldo_apos}</span>`}
+            </div>`).join('')}</div>`
+          : '<div class="vazio">Nenhuma baixa registrada ainda.</div>'}
+        </div>
       </div>`;
   }
 
-  // ─── Clientes ────────────────────────────────────────────────────
+  // ═══ Agenda ══════════════════════════════════════════════════════
+
+  async function verAgenda(data) {
+    const dataAtual = data && /^\d{4}-\d{2}-\d{2}$/.test(data) ? data : hojeISO();
+    const dia = await api(`/agenda/dia?data=${dataAtual}`);
+
+    const visiveis = dia.agendamentos.filter(a => a.status !== 'CANCELADO');
+    // A janela da grade cobre o expediente E os agendamentos existentes
+    // (um horário herdado de configuração antiga não pode estourar o topo).
+    const minsVisiveis = visiveis.flatMap(a => [paraMin(a.inicio), paraMin(a.fim)]);
+    const candidatosIni = dia.periodos.map(p => paraMin(p.inicio)).concat(minsVisiveis);
+    const candidatosFim = dia.periodos.map(p => paraMin(p.fim)).concat(minsVisiveis);
+    const abertura = candidatosIni.length ? Math.min(...candidatosIni) : paraMin('08:00');
+    const fechamento = candidatosFim.length ? Math.max(...candidatosFim) : paraMin('18:00');
+    const escala = 1.2; // px por minuto
+    const altura = (fechamento - abertura) * escala;
+
+    const NOME_RECURSO_TIPO = { ATENDIMENTO: '', VEICULO: ' (veículo)' };
+
+    function blocosDe(recursoId) {
+      return visiveis.filter(a => a.recurso_id === recursoId).map(a => {
+        const topo = (paraMin(a.inicio) - abertura) * escala;
+        const alt = Math.max((paraMin(a.fim) - paraMin(a.inicio)) * escala, 22);
+        const classe = a.status === 'CONCLUIDO' ? 'concluido'
+          : a.status === 'FALTOU' ? 'faltou'
+          : (a.tipo !== 'SERVICO' ? 'rota' : '');
+        const prefixo = a.tipo === 'BUSCA' ? 'Buscar: ' : (a.tipo === 'ENTREGA' ? 'Entregar: ' : '');
+        return `
+          <div class="agenda-bloco ${classe}" data-ag="${a.id}" style="top: ${topo}px; height: ${alt - 4}px">
+            ${a.inicio} ${prefixo}${esc(a.cliente_nome)}
+            <small>${a.pet_nome ? esc(a.pet_nome) + ' · ' : ''}${esc(a.servico_nome || '')}</small>
+          </div>`;
+      }).join('');
+    }
+
+    // Sombreia o que está fora dos períodos de funcionamento.
+    function forasDoExpediente() {
+      const blocos = [];
+      let cursor = abertura;
+      const pers = dia.periodos.map(p => [paraMin(p.inicio), paraMin(p.fim)]).sort((a, b) => a[0] - b[0]);
+      for (const [ini, fim] of pers) {
+        if (ini > cursor) blocos.push([cursor, ini]);
+        cursor = Math.max(cursor, fim);
+      }
+      if (cursor < fechamento) blocos.push([cursor, fechamento]);
+      return blocos.map(([ini, fim]) =>
+        `<div class="agenda-fora" style="top: ${(ini - abertura) * escala}px; height: ${(fim - ini) * escala}px"></div>`
+      ).join('');
+    }
+
+    const horas = [];
+    for (let m = Math.ceil(abertura / 60) * 60; m <= fechamento; m += 60) horas.push(m);
+
+    conteudo.innerHTML = `
+      <div class="linha-cabecalho">
+        <div class="cabecalho-pagina"><h2>Agenda</h2></div>
+        <button class="btn-primario" id="botao-novo-agendamento" type="button">Novo agendamento</button>
+      </div>
+      <div class="agenda-nav">
+        <button class="btn-fantasma btn-mini" id="dia-anterior" type="button">Anterior</button>
+        <div class="agenda-data">${dataExtensa(dataAtual)}</div>
+        <button class="btn-fantasma btn-mini" id="dia-seguinte" type="button">Próximo</button>
+        <button class="btn-fantasma btn-mini" id="dia-hoje" type="button">Hoje</button>
+        <input type="date" id="dia-escolhido" class="busca" style="max-width: 170px; border-radius: 10px; padding: 8px 12px" value="${dataAtual}">
+      </div>
+      ${dia.fechado || !dia.periodos.length
+        ? `<div class="vazio">O petshop não abre neste dia.${ehAdmin() ? '<br>Configure o funcionamento em Configurações.' : ''}</div>
+           ${visiveis.filter(a => a.status === 'AGENDADO').length ? `
+           <div class="faixa-aviso">Atenção: existem agendamentos marcados neste dia fechado — reagende ou cancele.</div>
+           <div class="lista">${visiveis.filter(a => a.status === 'AGENDADO').map(a => `
+             <div class="linha" data-ag="${a.id}" style="cursor: pointer">
+               <div class="linha-data" style="min-width: 52px">${a.inicio}</div>
+               <div style="flex: 1">
+                 <div class="linha-titulo">${esc(a.cliente_nome)}</div>
+                 <div class="linha-sub">${a.pet_nome ? esc(a.pet_nome) + ' · ' : ''}${esc(a.servico_nome || '')}</div>
+               </div>
+             </div>`).join('')}</div>` : ''}`
+        : `
+      <div style="overflow-x: auto">
+        <div class="agenda-grade" style="grid-template-columns: 64px repeat(${dia.recursos.length}, minmax(150px, 1fr)); min-width: ${100 + dia.recursos.length * 160}px">
+          <div class="agenda-cabecalho" style="border-left: none; background: var(--bg-panel)"></div>
+          ${dia.recursos.map(r => `<div class="agenda-cabecalho">${esc(r.nome)}${NOME_RECURSO_TIPO[r.tipo] || ''}${r.ativo === false ? ' — inativo' : ''}</div>`).join('')}
+          <div class="agenda-horas" style="height: ${altura}px">
+            ${horas.map(m => `<div class="agenda-hora" style="top: ${(m - abertura) * escala}px">${String(Math.floor(m / 60)).padStart(2, '0')}:00</div>`).join('')}
+          </div>
+          ${dia.recursos.map(r => `
+            <div class="agenda-coluna" style="height: ${altura}px">
+              ${horas.map(m => `<div class="agenda-linha-hora" style="top: ${(m - abertura) * escala}px"></div>`).join('')}
+              ${forasDoExpediente()}
+              ${blocosDe(r.id)}
+            </div>`).join('')}
+        </div>
+      </div>`}`;
+
+    document.getElementById('botao-novo-agendamento').addEventListener('click', () => modalNovoAgendamento(dataAtual));
+    document.getElementById('dia-anterior').addEventListener('click', () => verAgenda(somarDiasISO(dataAtual, -1)));
+    document.getElementById('dia-seguinte').addEventListener('click', () => verAgenda(somarDiasISO(dataAtual, 1)));
+    document.getElementById('dia-hoje').addEventListener('click', () => verAgenda(hojeISO()));
+    document.getElementById('dia-escolhido').addEventListener('change', (ev) => verAgenda(ev.target.value));
+
+    conteudo.querySelectorAll('[data-ag]').forEach(el =>
+      el.addEventListener('click', () => {
+        const ag = dia.agendamentos.find(a => a.id === parseInt(el.dataset.ag, 10));
+        if (ag) modalDetalheAgendamento(ag, dataAtual);
+      }));
+  }
+
+  async function modalNovoAgendamento(dataPadrao, clientePre) {
+    const [clientes, servicos] = await Promise.all([api('/clientes'), carregarServicos()]);
+    const servicosAtivos = servicos.filter(s => s.ativo);
+    if (!servicosAtivos.length) { toast('Cadastre um serviço no Catálogo primeiro.', true); return; }
+
+    const modal = abrirModal(`
+      <h3>Novo agendamento</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>Cliente</label>
+          <select name="cliente_id" required>
+            <option value="">Escolha…</option>
+            ${clientes.map(c => `<option value="${c.id}" ${clientePre === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="campo"><label>Pet</label>
+          <select name="pet_id"><option value="">—</option></select>
+        </div>
+        <div class="campo"><label>Serviço</label>
+          <select name="servico_id" required>
+            ${servicosAtivos.map(s => `<option value="${s.id}">${esc(s.nome)} — ${s.duracao_minutos} min${s.preco_centavos ? ' · ' + formatarReais(s.preco_centavos) : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end">
+          <div class="campo"><label>Data</label>
+            <input name="data" type="date" value="${dataPadrao}" min="${hojeISO()}" required>
+          </div>
+          <label id="rotulo-leva-traz" style="display: none; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer; padding-bottom: 10px">
+            <input type="checkbox" name="leva_traz" style="width: 17px; height: 17px; accent-color: var(--primary)">
+            Leva-e-traz (buscar em casa)
+          </label>
+        </div>
+        <div class="campo"><label>Horário</label>
+          <div class="pilulas-horario" id="pilulas"></div>
+          <input type="hidden" name="inicio">
+        </div>
+        <div class="campo"><label>Observação</label><input name="observacao"></div>
+        ${rodapeModal('Agendar')}
+      </form>`);
+    ligarFechar(modal);
+
+    const form = modal.querySelector('#form-modal');
+    const seletorCliente = form.querySelector('[name="cliente_id"]');
+    const seletorPet = form.querySelector('[name="pet_id"]');
+    const pilulas = modal.querySelector('#pilulas');
+    const campoInicio = form.querySelector('[name="inicio"]');
+    const rotuloLevaTraz = modal.querySelector('#rotulo-leva-traz');
+
+    async function carregarPets() {
+      seletorPet.innerHTML = '<option value="">—</option>';
+      if (!seletorCliente.value) return;
+      const ficha = await api(`/clientes/${seletorCliente.value}`);
+      for (const p of ficha.pets) {
+        const opcao = document.createElement('option');
+        opcao.value = p.id;
+        opcao.textContent = p.nome;
+        seletorPet.appendChild(opcao);
+      }
+      if (ficha.pets.length === 1) seletorPet.value = String(ficha.pets[0].id);
+    }
+
+    async function carregarHorarios() {
+      campoInicio.value = '';
+      pilulas.innerHTML = '<span style="color: var(--text-subtle); font-size: 0.85rem">Carregando…</span>';
+      const data = form.querySelector('[name="data"]').value;
+      const servicoId = form.querySelector('[name="servico_id"]').value;
+      const levaTraz = form.querySelector('[name="leva_traz"]').checked;
+      if (!data || !servicoId) { pilulas.innerHTML = ''; return; }
+      try {
+        const r = await api(`/agenda/horarios-livres?data=${data}&servico_id=${servicoId}&leva_traz=${levaTraz}`);
+        rotuloLevaTraz.style.display = r.leva_traz_disponivel ? 'flex' : 'none';
+        if (!r.horarios.length) {
+          pilulas.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem">Nenhum horário livre neste dia.</span>';
+          return;
+        }
+        pilulas.innerHTML = r.horarios.map(h => `<button type="button" class="pilula-horario" data-hora="${h}">${h}</button>`).join('');
+        pilulas.querySelectorAll('[data-hora]').forEach(b => b.addEventListener('click', () => {
+          pilulas.querySelectorAll('.pilula-horario').forEach(x => x.classList.remove('escolhida'));
+          b.classList.add('escolhida');
+          campoInicio.value = b.dataset.hora;
+        }));
+      } catch (err) {
+        pilulas.innerHTML = `<span style="color: var(--danger); font-size: 0.85rem">${esc(err.message)}</span>`;
+      }
+    }
+
+    seletorCliente.addEventListener('change', () => carregarPets().catch(() => {}));
+    form.querySelector('[name="data"]').addEventListener('change', carregarHorarios);
+    form.querySelector('[name="servico_id"]').addEventListener('change', carregarHorarios);
+    form.querySelector('[name="leva_traz"]').addEventListener('change', carregarHorarios);
+    if (clientePre) { seletorCliente.value = String(clientePre); carregarPets().catch(() => {}); }
+    carregarHorarios();
+
+    aoEnviar(form, async () => {
+      const f = new FormData(form);
+      if (!f.get('inicio')) { toast('Escolha um horário.', true); return; }
+      try {
+        const r = await api('/agenda/agendamentos', { method: 'POST', body: {
+          cliente_id: parseInt(f.get('cliente_id'), 10),
+          pet_id: f.get('pet_id') ? parseInt(f.get('pet_id'), 10) : null,
+          servico_id: parseInt(f.get('servico_id'), 10),
+          data: f.get('data'),
+          inicio: f.get('inicio'),
+          leva_traz: form.querySelector('[name="leva_traz"]').checked,
+          observacao: f.get('observacao'),
+        }});
+        fecharModal();
+        toast(r.aviso_entrega ? `Agendado. ${r.aviso_entrega}` : 'Agendado.', !!r.aviso_entrega);
+        if (window.location.hash.startsWith('#/agenda')) verAgenda(f.get('data'));
+        else renderizar();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  function modalDetalheAgendamento(ag, dataAtual) {
+    const NOME_TIPO = { SERVICO: 'Atendimento', BUSCA: 'Busca (leva-e-traz)', ENTREGA: 'Entrega (leva-e-traz)' };
+    const podeAgir = ag.status === 'AGENDADO';
+    const modal = abrirModal(`
+      <h3>${ag.inicio}–${ag.fim} · ${esc(ag.cliente_nome)}</h3>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.92rem; color: var(--text-muted)">
+        <div>${esc(NOME_TIPO[ag.tipo])} · <a href="#/cliente/${ag.cliente_id}">${esc(ag.cliente_nome)}</a></div>
+        ${ag.pet_nome ? `<div>Pet: ${esc(ag.pet_nome)}</div>` : ''}
+        ${ag.servico_nome ? `<div>Serviço: ${esc(ag.servico_nome)}</div>` : ''}
+        <div>Situação: <span class="chip ${ag.status === 'CONCLUIDO' ? 'ok' : (ag.status === 'FALTOU' ? 'alerta' : 'acento')}">${esc(ag.status)}</span></div>
+        ${ag.observacao ? `<div>Obs.: ${esc(ag.observacao)}</div>` : ''}
+      </div>
+      ${podeAgir && ag.tipo === 'SERVICO' ? `
+        <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+          <input type="checkbox" id="consumir-credito" checked style="width: 17px; height: 17px; accent-color: var(--primary)">
+          Ao concluir, dar baixa de 1 crédito do pacote
+        </label>` : ''}
+      <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap">
+        <button class="btn-fantasma" data-fechar type="button">Fechar</button>
+        ${podeAgir ? `
+          <button class="btn-fantasma perigo" id="acao-cancelar" type="button">Cancelar${ag.tipo === 'SERVICO' ? ' (e leva-e-traz)' : ''}</button>
+          ${ag.tipo === 'SERVICO' ? '<button class="btn-fantasma perigo" id="acao-faltou" type="button">Faltou</button>' : ''}
+          <button class="btn-primario" id="acao-concluir" type="button">Concluir</button>` : ''}
+      </div>`);
+    ligarFechar(modal);
+
+    async function executar(acao) {
+      try {
+        const consumir = modal.querySelector('#consumir-credito');
+        const r = await api(`/agenda/agendamentos/${ag.id}`, { method: 'PUT', body: {
+          acao, consumir_credito: consumir ? consumir.checked : false,
+        }});
+        fecharModal();
+        if (acao === 'CONCLUIR' && r.sem_credito) {
+          toast('Concluído — cliente SEM crédito deste serviço: cobrar na hora.', true);
+        } else if (acao === 'CONCLUIR' && r.baixa) {
+          toast(`Concluído. Crédito baixado (restou ${r.baixa.saldo_apos}).`);
+        } else {
+          toast(acao === 'CANCELAR' ? 'Cancelado.' : (acao === 'FALTOU' ? 'Falta registrada.' : 'Concluído.'));
+        }
+        verAgenda(dataAtual);
+      } catch (err) { toast(err.message, true); }
+    }
+    const btnConcluir = modal.querySelector('#acao-concluir');
+    const btnCancelar = modal.querySelector('#acao-cancelar');
+    const btnFaltou = modal.querySelector('#acao-faltou');
+    if (btnConcluir) btnConcluir.addEventListener('click', () => executar('CONCLUIR'));
+    if (btnCancelar) btnCancelar.addEventListener('click', () => {
+      if (window.confirm('Cancelar este agendamento?')) executar('CANCELAR');
+    });
+    if (btnFaltou) btnFaltou.addEventListener('click', () => executar('FALTOU'));
+  }
+
+  // ═══ Clientes ════════════════════════════════════════════════════
 
   async function verClientes(busca) {
     const query = busca ? `?busca=${encodeURIComponent(busca)}` : '';
@@ -189,7 +557,6 @@
       <input class="busca" id="campo-busca" type="search" placeholder="Buscar por cliente ou pet" value="${esc(busca || '')}">
       ${clientes.length ? `<div class="lista">${clientes.map(c => {
         const temPacote = c.pacote_id !== null && c.pacote_id !== undefined;
-        // "Acabando" olha o saldo somado: pacote novo cheio na fila não é alerta.
         const acabando = temPacote && c.saldo_total <= 3;
         const extras = temPacote ? c.saldo_total - c.saldo : 0;
         return `
@@ -212,6 +579,7 @@
                <button class="btn-primario btn-mini" data-baixa="${c.id}" type="button">Dar baixa</button>`
             : `<span class="chip">Sem pacote</span>
                <button class="btn-fantasma btn-mini" data-vender="${c.id}" type="button">Vender pacote</button>`}
+          <button class="btn-fantasma btn-mini" data-agendar="${c.id}" type="button">Agendar</button>
           <a class="btn-fantasma btn-mini" href="#/cliente/${c.id}" style="text-decoration: none">Ficha</a>
         </div>`;
       }).join('')}</div>`
@@ -232,6 +600,8 @@
       b.addEventListener('click', () => modalDarBaixa(parseInt(b.dataset.baixa, 10))));
     conteudo.querySelectorAll('[data-vender]').forEach(b =>
       b.addEventListener('click', () => modalVenderPacote(parseInt(b.dataset.vender, 10))));
+    conteudo.querySelectorAll('[data-agendar]').forEach(b =>
+      b.addEventListener('click', () => modalNovoAgendamento(hojeISO(), parseInt(b.dataset.agendar, 10))));
   }
 
   function modalNovoCliente() {
@@ -252,8 +622,7 @@
         ${rodapeModal('Cadastrar')}
       </form>`);
     ligarFechar(modal);
-    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
+    aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
       const f = new FormData(ev.target);
       try {
         const cliente = await api('/clientes', { method: 'POST', body: {
@@ -274,14 +643,7 @@
     });
   }
 
-  // ─── Ficha do cliente ────────────────────────────────────────────
-
-  // Com mais de um pacote ativo, consome-se o mais antigo primeiro
-  // (a lista da ficha vem em ordem decrescente de criação).
-  function pacoteEmConsumo(pacotes) {
-    const ativos = pacotes.filter(p => p.status === 'ATIVO');
-    return ativos.length ? ativos[ativos.length - 1] : null;
-  }
+  // ═══ Ficha do cliente ════════════════════════════════════════════
 
   async function verFicha(clienteId) {
     const c = await api(`/clientes/${clienteId}`);
@@ -289,7 +651,6 @@
     const proximos = c.pacotes.filter(p => p.status === 'ATIVO' && (!ativo || p.id !== ativo.id));
     const anteriores = c.pacotes.filter(p => p.status !== 'ATIVO');
     const saldoProximos = proximos.reduce((soma, p) => soma + p.saldo, 0);
-
     const STATUS_CHIP = { ATIVO: 'ok', ESGOTADO: 'alerta', VENCIDO: 'alerta', CANCELADO: '' };
 
     conteudo.innerHTML = `
@@ -306,7 +667,8 @@
           <button class="btn-fantasma" id="botao-editar" type="button">Editar</button>
           <button class="btn-fantasma" id="botao-link" type="button">Link do portal</button>
           <button class="btn-fantasma" id="botao-vender" type="button">Vender pacote</button>
-          ${ativo ? '<button class="btn-primario" id="botao-baixa" type="button">Dar baixa de banho</button>' : ''}
+          <button class="btn-fantasma" id="botao-agendar" type="button">Agendar</button>
+          ${ativo ? '<button class="btn-primario" id="botao-baixa" type="button">Dar baixa</button>' : ''}
         </div>
       </div>
 
@@ -315,7 +677,7 @@
           ${ativo ? `
           <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <div class="rotulo-secao">Pacote ativo</div>
+              <div class="rotulo-secao">Pacote em consumo</div>
               <span class="chip ${ativo.saldo <= 3 ? 'alerta' : 'ok'}">${ativo.saldo <= 3 ? 'Acabando' : 'Em dia'}</span>
             </div>
             <div>
@@ -324,13 +686,20 @@
             </div>
             <div style="display: flex; align-items: baseline; gap: 10px">
               <div style="font-family: var(--fonte-titulo); font-size: 3rem; font-weight: 550; line-height: 1">${ativo.saldo}</div>
-              <div style="color: var(--text-muted); font-size: 0.92rem">de ${ativo.qtd_banhos} banhos${saldoProximos > 0 ? ` · +${saldoProximos} no próximo pacote` : ''}</div>
+              <div style="color: var(--text-muted); font-size: 0.92rem">créditos de ${ativo.qtd_banhos}${saldoProximos > 0 ? ` · +${saldoProximos} no próximo pacote` : ''}</div>
             </div>
-            ${barraSaldo(ativo.saldo, ativo.qtd_banhos, 999).replace('width: 999px', 'width: 100%')}
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              ${(ativo.itens || []).map(i => `
+                <div class="credito-linha">
+                  <span class="credito-nome">${esc(i.servico_nome)}</span>
+                  ${barraSaldo(i.saldo, i.quantidade, 90)}
+                  <span class="credito-numeros">${i.saldo} / ${i.quantidade}</span>
+                </div>`).join('')}
+            </div>
             <div class="linha-sub">${ativo.validade_ate ? `válido até ${dataLonga(ativo.validade_ate)}` : 'sem validade'}</div>
             ${ehAdmin() ? `<button class="btn-fantasma btn-mini" id="botao-ajustar-pacote" type="button" style="align-self: flex-start">Ajustar validade / cancelar</button>` : ''}
           </div>` : `
-          <div class="vazio">Nenhum pacote ativo.<br>Venda um pacote para começar a controlar o saldo.</div>`}
+          <div class="vazio">Nenhum pacote ativo.<br>Venda um pacote para começar a controlar os créditos.</div>`}
 
           <div class="cartao" style="padding: 22px 24px; display: flex; flex-direction: column; gap: 12px">
             <div style="display: flex; justify-content: space-between; align-items: center">
@@ -347,6 +716,19 @@
               </div>`).join('') : '<div class="linha-sub">Nenhum pet cadastrado.</div>'}
           </div>
 
+          ${c.agendamentos.length ? `
+          <div class="cartao" style="padding: 22px 24px; display: flex; flex-direction: column; gap: 10px">
+            <div class="rotulo-secao">Próximos agendamentos</div>
+            ${c.agendamentos.map(a => `
+              <div class="linha linha-inset" style="padding: 10px 14px">
+                <div class="linha-data" style="font-size: 1rem">${dataCurta(a.data)}</div>
+                <div style="flex: 1">
+                  <div class="linha-titulo" style="font-size: 0.9rem">${a.inicio} · ${esc(a.servico_nome || '')}</div>
+                  <div class="linha-sub">${a.pet_nome ? esc(a.pet_nome) : ''}${a.leva_traz ? ' · leva-e-traz' : ''}</div>
+                </div>
+              </div>`).join('')}
+          </div>` : ''}
+
           ${proximos.length ? `
           <div class="cartao" style="padding: 22px 24px; display: flex; flex-direction: column; gap: 10px">
             <div class="rotulo-secao">Próximos pacotes</div>
@@ -354,7 +736,7 @@
               <div class="linha linha-inset" style="padding: 10px 14px">
                 <div style="flex: 1">
                   <div class="linha-titulo" style="font-size: 0.9rem">${esc(p.nome)}</div>
-                  <div class="linha-sub">${p.saldo} de ${p.qtd_banhos} banhos · comprado em ${dataLonga(p.comprado_em)}</div>
+                  <div class="linha-sub">${p.saldo} de ${p.qtd_banhos} créditos · comprado em ${dataLonga(p.comprado_em)}</div>
                 </div>
                 <span class="chip ok">Na fila</span>
               </div>`).join('')}
@@ -410,6 +792,7 @@
     document.getElementById('botao-editar').addEventListener('click', () => modalEditarCliente(c));
     document.getElementById('botao-link').addEventListener('click', () => modalLinkPortal(c));
     document.getElementById('botao-vender').addEventListener('click', () => modalVenderPacote(c.id));
+    document.getElementById('botao-agendar').addEventListener('click', () => modalNovoAgendamento(hojeISO(), c.id));
     const botaoBaixa = document.getElementById('botao-baixa');
     if (botaoBaixa) botaoBaixa.addEventListener('click', () => modalDarBaixa(c.id));
     document.getElementById('botao-novo-pet').addEventListener('click', () => modalNovoPet(c.id));
@@ -418,10 +801,10 @@
 
     conteudo.querySelectorAll('[data-estornar]').forEach(b =>
       b.addEventListener('click', async () => {
-        if (!window.confirm('Estornar esta baixa? O saldo volta em 1 banho.')) return;
+        if (!window.confirm('Estornar esta baixa? O crédito volta ao pacote.')) return;
         try {
-          const r = await api(`/baixas/${b.dataset.estornar}/estornar`, { method: 'POST' });
-          toast(`Baixa estornada. Saldo: ${r.saldo}.`);
+          await api(`/baixas/${b.dataset.estornar}/estornar`, { method: 'POST' });
+          toast('Baixa estornada.');
           verFicha(clienteId);
         } catch (err) { toast(err.message, true); }
       }));
@@ -431,33 +814,6 @@
         const p = c.pacotes.find(x => x.id === parseInt(b.dataset.reativar, 10));
         if (p) modalReativarPacote(p, clienteId);
       }));
-  }
-
-  function modalReativarPacote(pacote, clienteId) {
-    const exigeValidade = pacote.status === 'VENCIDO';
-    const modal = abrirModal(`
-      <h3>Reativar pacote</h3>
-      <p style="font-size: 0.88rem; color: var(--text-muted); line-height: 1.5">
-        ${esc(pacote.nome)} · restam ${pacote.saldo} banho(s).
-        ${exigeValidade ? 'O pacote está vencido — defina a nova validade.' : ''}
-      </p>
-      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
-        <div class="campo"><label>${exigeValidade ? 'Nova validade' : 'Validade (opcional)'}</label>
-          <input name="validade_ate" type="date" ${exigeValidade ? 'required' : ''}>
-        </div>
-        ${rodapeModal('Reativar')}
-      </form>`);
-    ligarFechar(modal);
-    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const f = new FormData(ev.target);
-      const corpo = { status: 'ATIVO' };
-      if (f.get('validade_ate')) corpo.validade_ate = f.get('validade_ate');
-      try {
-        await api(`/pacotes/${pacote.id}`, { method: 'PUT', body: corpo });
-        fecharModal(); toast('Pacote reativado.'); verFicha(clienteId);
-      } catch (err) { toast(err.message, true); }
-    });
   }
 
   function modalEditarCliente(c) {
@@ -487,11 +843,11 @@
   function modalLinkPortal(c) {
     const telefone = String(c.telefone || '').replace(/\D/g, '');
     const numeroWhats = telefone ? (telefone.length <= 11 ? '55' + telefone : telefone) : null;
-    const textoWhats = `Olá, ${c.nome}! Acompanhe o saldo de banhos por aqui: ${c.link_portal}`;
+    const textoWhats = `Olá, ${c.nome}! Acompanhe o saldo e os agendamentos por aqui: ${c.link_portal}`;
     const modal = abrirModal(`
       <h3>Link do portal do cliente</h3>
       <p style="font-size: 0.88rem; color: var(--text-muted); line-height: 1.5">
-        Por este link o cliente vê o saldo, os últimos banhos e agenda pelo WhatsApp — sem senha.
+        Por este link o cliente vê os créditos, os próximos agendamentos e os últimos serviços — sem senha.
       </p>
       <div class="campo"><label>Link</label><input id="campo-link" readonly value="${esc(c.link_portal)}"></div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap">
@@ -550,148 +906,6 @@
     });
   }
 
-  // ─── Vender pacote ───────────────────────────────────────────────
-
-  async function modalVenderPacote(clienteId) {
-    const modelos = (await api('/pacotes/modelos')).filter(m => m.ativo);
-    const modal = abrirModal(`
-      <h3>Vender pacote</h3>
-      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
-        ${modelos.length ? `
-        <div class="campo"><label>Pacote do catálogo</label>
-          <select name="modelo_id">
-            ${modelos.map(m => `<option value="${m.id}">${esc(m.nome)} — ${m.qtd_banhos} banhos · ${formatarReais(m.valor_centavos)}</option>`).join('')}
-            <option value="">Pacote avulso (preencher abaixo)</option>
-          </select>
-        </div>` : `
-        <p style="font-size: 0.85rem; color: var(--text-muted)">
-          Nenhum modelo no catálogo ainda — preencha o pacote avulso abaixo
-          ${ehAdmin() ? 'ou cadastre modelos na aba Pacotes.' : '.'}
-        </p>`}
-        <div id="campos-avulso" style="display: ${modelos.length ? 'none' : 'flex'}; flex-direction: column; gap: 14px">
-          <div class="campo"><label>Nome do pacote</label><input name="nome" placeholder="Pacote 24 banhos"></div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px">
-            <div class="campo"><label>Banhos</label><input name="qtd_banhos" type="number" min="1" step="1"></div>
-            <div class="campo"><label>Valor (R$)</label><input name="valor" inputmode="decimal" placeholder="700,00"></div>
-            <div class="campo"><label>Validade (meses)</label><input name="validade_meses" type="number" min="1" step="1" placeholder="12"></div>
-          </div>
-        </div>
-        ${rodapeModal('Registrar venda')}
-      </form>`);
-    ligarFechar(modal);
-
-    const seletor = modal.querySelector('[name="modelo_id"]');
-    const camposAvulso = modal.querySelector('#campos-avulso');
-    if (seletor) {
-      seletor.addEventListener('change', () => {
-        camposAvulso.style.display = seletor.value === '' ? 'flex' : 'none';
-      });
-    }
-
-    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const f = new FormData(ev.target);
-      const modeloId = seletor ? seletor.value : '';
-      try {
-        const corpo = { cliente_id: clienteId };
-        if (modeloId) {
-          corpo.modelo_id = parseInt(modeloId, 10);
-        } else {
-          const centavos = paraCentavos(f.get('valor'));
-          if (!Number.isFinite(centavos)) throw new Error('Informe o valor do pacote.');
-          corpo.nome = f.get('nome');
-          corpo.qtd_banhos = parseInt(f.get('qtd_banhos'), 10);
-          corpo.valor_centavos = centavos;
-          corpo.validade_meses = f.get('validade_meses') ? parseInt(f.get('validade_meses'), 10) : null;
-        }
-        await api('/pacotes', { method: 'POST', body: corpo });
-        fecharModal(); toast('Pacote registrado.');
-        window.location.hash = `#/cliente/${clienteId}`;
-        renderizar();
-      } catch (err) { toast(err.message, true); }
-    });
-  }
-
-  // ─── Dar baixa ───────────────────────────────────────────────────
-
-  async function modalDarBaixa(clienteId) {
-    const c = await api(`/clientes/${clienteId}`);
-    const pacote = pacoteEmConsumo(c.pacotes);
-    if (!pacote) { toast('Este cliente não tem pacote ativo.', true); return; }
-    // O servidor transborda para o próximo pacote ATIVO quando o em
-    // consumo não cobre tudo — aqui mostramos o saldo somado.
-    const saldoTotal = c.pacotes
-      .filter(p => p.status === 'ATIVO')
-      .reduce((soma, p) => soma + p.saldo, 0);
-
-    const modal = abrirModal(`
-      <h3>Dar baixa — ${esc(c.nome)}</h3>
-      <p style="font-size: 0.88rem; color: var(--text-muted)">
-        ${esc(pacote.nome)} · saldo <strong>${pacote.saldo}</strong>${saldoTotal > pacote.saldo ? ` (+${saldoTotal - pacote.saldo} no próximo pacote)` : ''}
-      </p>
-      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
-        ${c.pets.length ? `
-        <div class="campo"><label>Quais pets tomaram banho?</label>
-          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
-            ${c.pets.map(p => `
-              <label style="display: flex; align-items: center; gap: 10px; font-size: 0.92rem; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-main); cursor: pointer">
-                <input type="checkbox" name="pet" value="${p.id}" ${c.pets.length === 1 ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
-                ${esc(p.nome)}${p.raca ? ` <span style="color: var(--text-subtle)">· ${esc(p.raca)}</span>` : ''}
-              </label>`).join('')}
-          </div>
-        </div>` : `
-        <div class="campo"><label>Quantos banhos?</label>
-          <input name="quantidade" type="number" min="1" max="${saldoTotal}" step="1" value="1">
-        </div>`}
-        <div class="campo"><label>Serviço</label><input name="servico" value="Banho"></div>
-        <div class="campo"><label>Observação (opcional)</label><input name="observacao"></div>
-        <div id="resumo-baixa" style="font-size: 0.88rem; color: var(--text-muted)"></div>
-        ${rodapeModal('Confirmar baixa')}
-      </form>`);
-    ligarFechar(modal);
-
-    const form = modal.querySelector('#form-modal');
-    const resumo = modal.querySelector('#resumo-baixa');
-    function totalItens() {
-      if (c.pets.length) {
-        return [...form.querySelectorAll('[name="pet"]:checked')].length;
-      }
-      return parseInt(form.querySelector('[name="quantidade"]').value, 10) || 0;
-    }
-    function atualizarResumo() {
-      const n = totalItens();
-      resumo.textContent = n > 0
-        ? `${n} banho${n === 1 ? '' : 's'} — o saldo vai de ${saldoTotal} para ${saldoTotal - n}.`
-        : 'Selecione pelo menos um banho.';
-      if (n > saldoTotal) resumo.textContent = `Saldo insuficiente: restam ${saldoTotal} banho(s).`;
-    }
-    form.addEventListener('change', atualizarResumo);
-    form.addEventListener('input', atualizarResumo);
-    atualizarResumo();
-
-    form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const f = new FormData(form);
-      const servico = f.get('servico');
-      const observacao = f.get('observacao');
-      let itens;
-      if (c.pets.length) {
-        itens = [...form.querySelectorAll('[name="pet"]:checked')]
-          .map(caixa => ({ pet_id: parseInt(caixa.value, 10), servico }));
-      } else {
-        const n = parseInt(f.get('quantidade'), 10) || 0;
-        itens = Array.from({ length: n }, () => ({ servico }));
-      }
-      if (!itens.length) { toast('Selecione pelo menos um banho.', true); return; }
-      try {
-        const r = await api('/baixas', { method: 'POST', body: { pacote_id: pacote.id, itens, observacao } });
-        fecharModal();
-        toast(`Baixa registrada. Saldo: ${r.saldo}.`);
-        renderizar();
-      } catch (err) { toast(err.message, true); }
-    });
-  }
-
   function modalAjustarPacote(pacote, clienteId) {
     const modal = abrirModal(`
       <h3>Ajustar pacote</h3>
@@ -712,7 +926,7 @@
       } catch (err) { toast(err.message, true); }
     });
     modal.querySelector('#botao-cancelar-pacote').addEventListener('click', async () => {
-      if (!window.confirm('Cancelar este pacote? O saldo restante deixa de valer.')) return;
+      if (!window.confirm('Cancelar este pacote? Os créditos restantes deixam de valer.')) return;
       try {
         await api(`/pacotes/${pacote.id}`, { method: 'PUT', body: { status: 'CANCELADO' } });
         fecharModal(); toast('Pacote cancelado.'); verFicha(clienteId);
@@ -720,49 +934,342 @@
     });
   }
 
-  // ─── Pacotes (catálogo) ──────────────────────────────────────────
+  function modalReativarPacote(pacote, clienteId) {
+    const exigeValidade = pacote.status === 'VENCIDO';
+    const modal = abrirModal(`
+      <h3>Reativar pacote</h3>
+      <p style="font-size: 0.88rem; color: var(--text-muted); line-height: 1.5">
+        ${esc(pacote.nome)} · restam ${pacote.saldo} crédito(s).
+        ${exigeValidade ? 'O pacote está vencido — defina a nova validade.' : ''}
+      </p>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>${exigeValidade ? 'Nova validade' : 'Validade (opcional)'}</label>
+          <input name="validade_ate" type="date" ${exigeValidade ? 'required' : ''}>
+        </div>
+        ${rodapeModal('Reativar')}
+      </form>`);
+    ligarFechar(modal);
+    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const corpo = { status: 'ATIVO' };
+      if (f.get('validade_ate')) corpo.validade_ate = f.get('validade_ate');
+      try {
+        await api(`/pacotes/${pacote.id}`, { method: 'PUT', body: corpo });
+        fecharModal(); toast('Pacote reativado.'); verFicha(clienteId);
+      } catch (err) { toast(err.message, true); }
+    });
+  }
 
-  async function verPacotes() {
-    const modelos = await api('/pacotes/modelos');
+  // ═══ Vender pacote (itens por serviço) ═══════════════════════════
+
+  function linhaItemAvulso(servicos) {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 90px 36px; gap: 8px" class="item-avulso">
+        <select name="item_servico">
+          ${servicos.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+        </select>
+        <input name="item_qtd" type="number" min="1" step="1" placeholder="qtde">
+        <button type="button" class="btn-fantasma btn-mini" data-remover style="padding: 6px">×</button>
+      </div>`;
+  }
+
+  async function modalVenderPacote(clienteId) {
+    const [modelos, servicos] = await Promise.all([api('/pacotes/modelos'), carregarServicos()]);
+    const modelosAtivos = modelos.filter(m => m.ativo);
+    const servicosAtivos = servicos.filter(s => s.ativo);
+
+    function descreverModelo(m) {
+      const itens = (m.itens || []).map(i => `${i.quantidade} ${i.servico_nome}`).join(' + ');
+      return `${m.nome} — ${itens} · ${formatarReais(m.valor_centavos)}`;
+    }
+
+    const modal = abrirModal(`
+      <h3>Vender pacote</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        ${modelosAtivos.length ? `
+        <div class="campo"><label>Pacote do catálogo</label>
+          <select name="modelo_id">
+            ${modelosAtivos.map(m => `<option value="${m.id}">${esc(descreverModelo(m))}</option>`).join('')}
+            <option value="">Pacote avulso (montar abaixo)</option>
+          </select>
+        </div>` : `
+        <p style="font-size: 0.85rem; color: var(--text-muted)">
+          Nenhum modelo no catálogo — monte o pacote avulso abaixo${ehAdmin() ? ' ou cadastre modelos na aba Catálogo' : ''}.
+        </p>`}
+        <div id="campos-avulso" style="display: ${modelosAtivos.length ? 'none' : 'flex'}; flex-direction: column; gap: 12px">
+          <div class="campo"><label>Nome do pacote</label><input name="nome" placeholder="Pacote 24 banhos"></div>
+          <div class="campo"><label>Serviços incluídos</label>
+            <div id="itens-avulso" style="display: flex; flex-direction: column; gap: 8px">
+              ${linhaItemAvulso(servicosAtivos)}
+            </div>
+            <button type="button" class="btn-fantasma btn-mini" id="botao-mais-item" style="align-self: flex-start; margin-top: 6px">Adicionar serviço</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div class="campo"><label>Valor (R$)</label><input name="valor" inputmode="decimal" placeholder="700,00"></div>
+            <div class="campo"><label>Validade (meses)</label><input name="validade_meses" type="number" min="1" step="1" placeholder="12"></div>
+          </div>
+        </div>
+        ${rodapeModal('Registrar venda')}
+      </form>`);
+    ligarFechar(modal);
+
+    const seletor = modal.querySelector('[name="modelo_id"]');
+    const camposAvulso = modal.querySelector('#campos-avulso');
+    if (seletor) {
+      seletor.addEventListener('change', () => {
+        camposAvulso.style.display = seletor.value === '' ? 'flex' : 'none';
+      });
+    }
+    const itensBox = modal.querySelector('#itens-avulso');
+    modal.querySelector('#botao-mais-item').addEventListener('click', () => {
+      itensBox.insertAdjacentHTML('beforeend', linhaItemAvulso(servicosAtivos));
+      ligarRemover();
+    });
+    function ligarRemover() {
+      itensBox.querySelectorAll('[data-remover]').forEach(b => {
+        b.onclick = () => { if (itensBox.querySelectorAll('.item-avulso').length > 1) b.closest('.item-avulso').remove(); };
+      });
+    }
+    ligarRemover();
+
+    aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
+      const f = new FormData(ev.target);
+      const modeloId = seletor ? seletor.value : '';
+      try {
+        const corpo = { cliente_id: clienteId };
+        if (modeloId) {
+          corpo.modelo_id = parseInt(modeloId, 10);
+        } else {
+          const centavos = paraCentavos(f.get('valor'));
+          if (!Number.isFinite(centavos)) throw new Error('Informe o valor do pacote.');
+          const itens = [...itensBox.querySelectorAll('.item-avulso')].map(linha => ({
+            servico_id: parseInt(linha.querySelector('[name="item_servico"]').value, 10),
+            quantidade: parseInt(linha.querySelector('[name="item_qtd"]').value, 10),
+          })).filter(i => Number.isInteger(i.quantidade) && i.quantidade > 0);
+          if (!itens.length) throw new Error('Informe a quantidade de pelo menos um serviço.');
+          corpo.nome = f.get('nome');
+          corpo.valor_centavos = centavos;
+          corpo.validade_meses = f.get('validade_meses') ? parseInt(f.get('validade_meses'), 10) : null;
+          corpo.itens = itens;
+        }
+        await api('/pacotes', { method: 'POST', body: corpo });
+        fecharModal(); toast('Pacote registrado.');
+        window.location.hash = `#/cliente/${clienteId}`;
+        renderizar();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  // ═══ Dar baixa (por serviço) ═════════════════════════════════════
+
+  async function modalDarBaixa(clienteId) {
+    const c = await api(`/clientes/${clienteId}`);
+    const creditos = creditosDisponiveis(c);
+    if (!creditos.size) { toast('Este cliente não tem créditos disponíveis — venda um pacote.', true); return; }
+
+    const opcoes = [...creditos.entries()]
+      .map(([id, info]) => `<option value="${id}">${esc(info.nome)} — ${info.total} crédito${info.total === 1 ? '' : 's'}</option>`)
+      .join('');
+
+    const modal = abrirModal(`
+      <h3>Dar baixa — ${esc(c.nome)}</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>Serviço</label>
+          <select name="servico_id">${opcoes}</select>
+        </div>
+        ${c.pets.length ? `
+        <div class="campo"><label>Quais pets?</label>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
+            ${c.pets.map(p => `
+              <label style="display: flex; align-items: center; gap: 10px; font-size: 0.92rem; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-main); cursor: pointer">
+                <input type="checkbox" name="pet" value="${p.id}" ${c.pets.length === 1 ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+                ${esc(p.nome)}${p.raca ? ` <span style="color: var(--text-subtle)">· ${esc(p.raca)}</span>` : ''}
+              </label>`).join('')}
+          </div>
+        </div>` : `
+        <div class="campo"><label>Quantidade</label>
+          <input name="quantidade" type="number" min="1" step="1" value="1">
+        </div>`}
+        <div class="campo"><label>Observação (opcional)</label><input name="observacao"></div>
+        <div id="resumo-baixa" style="font-size: 0.88rem; color: var(--text-muted)"></div>
+        ${rodapeModal('Confirmar baixa')}
+      </form>`);
+    ligarFechar(modal);
+
+    const form = modal.querySelector('#form-modal');
+    const resumo = modal.querySelector('#resumo-baixa');
+    function totalItens() {
+      if (c.pets.length) return [...form.querySelectorAll('[name="pet"]:checked')].length;
+      return parseInt(form.querySelector('[name="quantidade"]').value, 10) || 0;
+    }
+    function atualizarResumo() {
+      const n = totalItens();
+      const servicoId = parseInt(form.querySelector('[name="servico_id"]').value, 10);
+      const info = creditos.get(servicoId);
+      if (!info) { resumo.textContent = ''; return; }
+      if (n <= 0) { resumo.textContent = 'Selecione pelo menos um.'; return; }
+      resumo.textContent = n > info.total
+        ? `Créditos insuficientes de ${info.nome}: restam ${info.total}.`
+        : `${n} × ${info.nome} — créditos: ${info.total} → ${info.total - n}.`;
+    }
+    form.addEventListener('change', atualizarResumo);
+    form.addEventListener('input', atualizarResumo);
+    atualizarResumo();
+
+    aoEnviar(form, async () => {
+      const f = new FormData(form);
+      const servicoId = parseInt(f.get('servico_id'), 10);
+      let itens;
+      if (c.pets.length) {
+        itens = [...form.querySelectorAll('[name="pet"]:checked')]
+          .map(caixa => ({ pet_id: parseInt(caixa.value, 10), servico_id: servicoId }));
+      } else {
+        const n = parseInt(f.get('quantidade'), 10) || 0;
+        itens = Array.from({ length: n }, () => ({ servico_id: servicoId }));
+      }
+      if (!itens.length) { toast('Selecione pelo menos um.', true); return; }
+      try {
+        const r = await api('/baixas', { method: 'POST', body: {
+          cliente_id: clienteId, itens, observacao: f.get('observacao'),
+        }});
+        fecharModal();
+        toast(`Baixa registrada. Créditos restantes: ${r.saldo}.`);
+        renderizar();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  // ═══ Catálogo (serviços + modelos de pacote) ═════════════════════
+
+  async function verCatalogo() {
+    const [servicos, modelos] = await Promise.all([carregarServicos(true), api('/pacotes/modelos')]);
+
     conteudo.innerHTML = `
       <div class="linha-cabecalho">
         <div class="cabecalho-pagina">
-          <h2>Pacotes</h2>
-          <p>Catálogo de pacotes que o petshop vende</p>
+          <h2>Catálogo</h2>
+          <p>Serviços com duração própria e os pacotes montados com eles</p>
         </div>
-        ${ehAdmin() ? '<button class="btn-primario" id="botao-novo-modelo" type="button">Novo modelo</button>' : ''}
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="rotulo-secao">Serviços</div>
+        ${ehAdmin() ? '<button class="btn-fantasma btn-mini" id="botao-novo-servico" type="button">Novo serviço</button>' : ''}
+      </div>
+      ${servicos.length ? `<div class="lista">${servicos.map(s => `
+        <div class="linha" style="${s.ativo ? '' : 'opacity: 0.55'}">
+          <div style="flex: 1">
+            <div class="linha-titulo">${esc(s.nome)}</div>
+            <div class="linha-sub">${s.duracao_minutos} minutos${s.preco_centavos ? ' · ' + formatarReais(s.preco_centavos) : ' · preço a combinar'}</div>
+          </div>
+          ${s.ativo ? '<span class="chip ok">Ativo</span>' : '<span class="chip">Inativo</span>'}
+          ${ehAdmin() ? `<button class="btn-fantasma btn-mini" data-editar-servico="${s.id}" type="button">Editar</button>` : ''}
+        </div>`).join('')}</div>`
+      : '<div class="vazio">Nenhum serviço cadastrado.</div>'}
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px">
+        <div class="rotulo-secao">Modelos de pacote</div>
+        ${ehAdmin() ? '<button class="btn-fantasma btn-mini" id="botao-novo-modelo" type="button">Novo modelo</button>' : ''}
       </div>
       ${modelos.length ? `<div class="lista">${modelos.map(m => `
         <div class="linha" style="${m.ativo ? '' : 'opacity: 0.55'}">
           <div style="flex: 1">
             <div class="linha-titulo">${esc(m.nome)}</div>
             <div class="linha-sub">
-              ${m.qtd_banhos} banhos · ${formatarReais(m.valor_centavos)}
-              (${formatarReais(Math.round(m.valor_centavos / m.qtd_banhos))} por banho)
+              ${(m.itens || []).map(i => `${i.quantidade} ${esc(i.servico_nome)}`).join(' + ') || 'sem itens'}
+              · ${formatarReais(m.valor_centavos)}
               ${m.validade_meses ? ` · validade ${m.validade_meses} meses` : ' · sem validade'}
             </div>
           </div>
           ${m.ativo ? '<span class="chip ok">Ativo</span>' : '<span class="chip">Inativo</span>'}
-          ${ehAdmin() ? `<button class="btn-fantasma btn-mini" data-editar="${m.id}" type="button">Editar</button>` : ''}
+          ${ehAdmin() ? `<button class="btn-fantasma btn-mini" data-editar-modelo="${m.id}" type="button">Editar</button>` : ''}
         </div>`).join('')}</div>`
-      : `<div class="vazio">Nenhum modelo cadastrado.${ehAdmin() ? '<br>Cadastre o primeiro — por exemplo: Pacote 24 banhos, R$ 700,00.' : ''}</div>`}`;
+      : `<div class="vazio">Nenhum modelo cadastrado.${ehAdmin() ? '<br>Exemplo: Pacote 24 banhos — 24 × Banho, R$ 700,00.' : ''}</div>`}`;
 
-    const botaoNovo = document.getElementById('botao-novo-modelo');
-    if (botaoNovo) botaoNovo.addEventListener('click', () => modalModelo(null));
-    conteudo.querySelectorAll('[data-editar]').forEach(b =>
+    const botaoServico = document.getElementById('botao-novo-servico');
+    if (botaoServico) botaoServico.addEventListener('click', () => modalServico(null));
+    conteudo.querySelectorAll('[data-editar-servico]').forEach(b =>
       b.addEventListener('click', () => {
-        const m = modelos.find(x => x.id === parseInt(b.dataset.editar, 10));
-        if (m) modalModelo(m);
+        const s = servicos.find(x => x.id === parseInt(b.dataset.editarServico, 10));
+        if (s) modalServico(s);
+      }));
+
+    const botaoModelo = document.getElementById('botao-novo-modelo');
+    if (botaoModelo) botaoModelo.addEventListener('click', () => modalModelo(null, servicos));
+    conteudo.querySelectorAll('[data-editar-modelo]').forEach(b =>
+      b.addEventListener('click', () => {
+        const m = modelos.find(x => x.id === parseInt(b.dataset.editarModelo, 10));
+        if (m) modalModelo(m, servicos);
       }));
   }
 
-  function modalModelo(m) {
+  function modalServico(s) {
+    const modal = abrirModal(`
+      <h3>${s ? 'Editar serviço' : 'Novo serviço'}</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>Nome</label><input name="nome" value="${s ? esc(s.nome) : ''}" placeholder="Banho e tosa" required></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+          <div class="campo"><label>Duração (minutos)</label><input name="duracao" type="number" min="5" step="5" value="${s ? s.duracao_minutos : ''}" placeholder="45" required></div>
+          <div class="campo"><label>Preço avulso (R$)</label><input name="preco" inputmode="decimal" value="${s && s.preco_centavos ? (s.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="80,00"></div>
+        </div>
+        ${s ? `
+        <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+          <input type="checkbox" name="ativo" ${s.ativo ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+          Disponível para agendamento e venda
+        </label>` : ''}
+        ${rodapeModal(s ? 'Salvar' : 'Cadastrar')}
+      </form>`);
+    ligarFechar(modal);
+    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const preco = String(f.get('preco') || '').trim() ? paraCentavos(f.get('preco')) : 0;
+      if (!Number.isFinite(preco)) { toast('Preço inválido.', true); return; }
+      const corpo = {
+        nome: f.get('nome'),
+        duracao_minutos: parseInt(f.get('duracao'), 10),
+        preco_centavos: preco,
+      };
+      try {
+        if (s) {
+          corpo.ativo = f.get('ativo') === 'on';
+          await api(`/servicos/${s.id}`, { method: 'PUT', body: corpo });
+        } else {
+          await api('/servicos', { method: 'POST', body: corpo });
+        }
+        fecharModal(); toast('Catálogo atualizado.'); verCatalogo();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  function linhaItemModelo(servicos, item) {
+    return `
+      <div style="display: grid; grid-template-columns: 1fr 90px 36px; gap: 8px" class="item-modelo">
+        <select name="item_servico">
+          ${servicos.map(s => `<option value="${s.id}" ${item && item.servico_id === s.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}
+        </select>
+        <input name="item_qtd" type="number" min="1" step="1" value="${item ? item.quantidade : ''}" placeholder="qtde">
+        <button type="button" class="btn-fantasma btn-mini" data-remover style="padding: 6px">×</button>
+      </div>`;
+  }
+
+  function modalModelo(m, servicos) {
+    const servicosAtivos = servicos.filter(s => s.ativo);
+    if (!servicosAtivos.length) { toast('Cadastre um serviço primeiro.', true); return; }
+    const itensIniciais = m && m.itens && m.itens.length ? m.itens : [null];
+
     const modal = abrirModal(`
       <h3>${m ? 'Editar modelo' : 'Novo modelo de pacote'}</h3>
       <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
         <div class="campo"><label>Nome</label><input name="nome" value="${m ? esc(m.nome) : ''}" placeholder="Pacote 24 banhos" required></div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px">
-          <div class="campo"><label>Banhos</label><input name="qtd_banhos" type="number" min="1" step="1" value="${m ? m.qtd_banhos : ''}" required></div>
+        <div class="campo"><label>Serviços incluídos</label>
+          <div id="itens-modelo" style="display: flex; flex-direction: column; gap: 8px">
+            ${itensIniciais.map(item => linhaItemModelo(servicosAtivos, item)).join('')}
+          </div>
+          <button type="button" class="btn-fantasma btn-mini" id="botao-mais-item" style="align-self: flex-start; margin-top: 6px">Adicionar serviço</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
           <div class="campo"><label>Valor (R$)</label><input name="valor" inputmode="decimal" value="${m ? (m.valor_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="700,00" required></div>
           <div class="campo"><label>Validade (meses)</label><input name="validade_meses" type="number" min="1" step="1" value="${m && m.validade_meses ? m.validade_meses : ''}" placeholder="12"></div>
         </div>
@@ -774,16 +1281,33 @@
         ${rodapeModal(m ? 'Salvar' : 'Cadastrar')}
       </form>`);
     ligarFechar(modal);
+
+    const itensBox = modal.querySelector('#itens-modelo');
+    modal.querySelector('#botao-mais-item').addEventListener('click', () => {
+      itensBox.insertAdjacentHTML('beforeend', linhaItemModelo(servicosAtivos, null));
+      ligarRemover();
+    });
+    function ligarRemover() {
+      itensBox.querySelectorAll('[data-remover]').forEach(b => {
+        b.onclick = () => { if (itensBox.querySelectorAll('.item-modelo').length > 1) b.closest('.item-modelo').remove(); };
+      });
+    }
+    ligarRemover();
+
     modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const f = new FormData(ev.target);
       const centavos = paraCentavos(f.get('valor'));
       if (!Number.isFinite(centavos)) { toast('Valor inválido.', true); return; }
+      const itens = [...itensBox.querySelectorAll('.item-modelo')].map(linha => ({
+        servico_id: parseInt(linha.querySelector('[name="item_servico"]').value, 10),
+        quantidade: parseInt(linha.querySelector('[name="item_qtd"]').value, 10),
+      })).filter(i => Number.isInteger(i.quantidade) && i.quantidade > 0);
+      if (!itens.length) { toast('Informe a quantidade de pelo menos um serviço.', true); return; }
       const corpo = {
-        nome: f.get('nome'),
-        qtd_banhos: parseInt(f.get('qtd_banhos'), 10),
-        valor_centavos: centavos,
+        nome: f.get('nome'), valor_centavos: centavos,
         validade_meses: f.get('validade_meses') ? parseInt(f.get('validade_meses'), 10) : null,
+        itens,
       };
       try {
         if (m) {
@@ -792,12 +1316,14 @@
         } else {
           await api('/pacotes/modelos', { method: 'POST', body: corpo });
         }
-        fecharModal(); toast('Catálogo atualizado.'); verPacotes();
+        fecharModal(); toast('Catálogo atualizado.'); verCatalogo();
       } catch (err) { toast(err.message, true); }
     });
   }
 
-  // ─── Configurações ───────────────────────────────────────────────
+  // ═══ Configurações ═══════════════════════════════════════════════
+
+  const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 
   async function verConfig() {
     if (!ehAdmin()) {
@@ -806,43 +1332,127 @@
         <div class="vazio">Apenas administradores acessam as configurações.</div>`;
       return;
     }
-    const emp = await api('/empresa');
+    const [emp, agenda] = await Promise.all([api('/empresa'), api('/agenda/config')]);
+
+    const porDia = new Map();
+    for (const h of agenda.horarios) {
+      if (!porDia.has(h.dia_semana)) porDia.set(h.dia_semana, []);
+      porDia.get(h.dia_semana).push(h);
+    }
+
+    function linhaPeriodo(dia, periodo) {
+      return `
+        <div class="periodo-linha" data-dia="${dia}" style="display: flex; gap: 8px; align-items: center">
+          <input type="time" name="periodo_inicio" value="${periodo ? periodo.inicio : '08:00'}" style="padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main)">
+          <span style="color: var(--text-subtle)">às</span>
+          <input type="time" name="periodo_fim" value="${periodo ? periodo.fim : '18:00'}" style="padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main)">
+          <button type="button" class="btn-fantasma btn-mini" data-remover-periodo style="padding: 5px 10px">×</button>
+        </div>`;
+    }
+
     conteudo.innerHTML = `
       <div class="cabecalho-pagina">
         <h2>Configurações</h2>
         <p>Plano ${esc(emp.plano)} · acesso até ${dataLonga(emp.acesso_ate)}</p>
       </div>
-      <div class="cartao" style="padding: 24px; max-width: 560px">
-        <form id="form-empresa" style="display: flex; flex-direction: column; gap: 14px">
-          <div class="rotulo-secao">Dados do petshop</div>
-          <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
-          <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
-            <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
-          <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar</button>
-        </form>
-      </div>
-      <div class="cartao" style="padding: 24px; max-width: 560px; display: flex; flex-direction: column; gap: 14px">
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <div class="rotulo-secao">Equipe</div>
-          <button class="btn-fantasma btn-mini" id="botao-novo-usuario" type="button">Novo usuário</button>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; align-items: start">
+
+        <div style="display: flex; flex-direction: column; gap: 20px">
+          <div class="cartao" style="padding: 24px">
+            <form id="form-empresa" style="display: flex; flex-direction: column; gap: 14px">
+              <div class="rotulo-secao">Dados do petshop</div>
+              <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
+              <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
+                <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
+              <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar</button>
+            </form>
+          </div>
+
+          <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div class="rotulo-secao">Equipe e veículos</div>
+              <button class="btn-fantasma btn-mini" id="botao-novo-recurso" type="button">Adicionar</button>
+            </div>
+            <div class="lista" style="gap: 8px">
+              ${agenda.recursos.map(r => `
+                <div class="linha linha-inset" style="padding: 10px 14px; ${r.ativo ? '' : 'opacity: 0.55'}">
+                  <div style="color: var(--primary-ink)">${r.tipo === 'VEICULO' ? ICONES.van : ICONES.pata}</div>
+                  <div style="flex: 1">
+                    <div class="linha-titulo" style="font-size: 0.92rem">${esc(r.nome)}</div>
+                    <div class="linha-sub">${r.tipo === 'VEICULO' ? 'veículo do leva-e-traz' : 'atendimento simultâneo'}</div>
+                  </div>
+                  <button class="btn-fantasma btn-mini ${r.ativo ? 'perigo' : ''}" data-alternar-recurso="${r.id}" data-nome="${esc(r.nome)}" data-ativo="${r.ativo}" type="button">
+                    ${r.ativo ? 'Desativar' : 'Reativar'}
+                  </button>
+                </div>`).join('')}
+            </div>
+            <div class="linha-sub">Cada linha de atendimento é um serviço acontecendo ao mesmo tempo. Sem veículo cadastrado, o leva-e-traz fica desligado.</div>
+          </div>
+
+          <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div class="rotulo-secao">Equipe (acessos)</div>
+              <button class="btn-fantasma btn-mini" id="botao-novo-usuario" type="button">Novo usuário</button>
+            </div>
+            <div class="lista" style="gap: 8px">
+              ${emp.usuarios.map(u => `
+                <div class="linha linha-inset" style="padding: 10px 14px; ${u.ativo ? '' : 'opacity: 0.55'}">
+                  <div class="avatar" style="width: 36px; height: 36px; font-size: 0.9rem">${esc(String(u.nome).trim().charAt(0).toUpperCase())}</div>
+                  <div style="flex: 1">
+                    <div class="linha-titulo" style="font-size: 0.92rem">${esc(u.nome)}</div>
+                    <div class="linha-sub">${esc(u.email)}</div>
+                  </div>
+                  <span class="chip ${u.permissoes === 'ADMINISTRADOR' ? 'acento' : ''}">${u.permissoes === 'ADMINISTRADOR' ? 'Admin' : 'Atendente'}</span>
+                  ${u.id !== sessao.usuario.id ? `
+                    <button class="btn-fantasma btn-mini ${u.ativo ? 'perigo' : ''}" data-alternar="${u.id}" data-ativo="${u.ativo}" type="button">
+                      ${u.ativo ? 'Desativar' : 'Reativar'}
+                    </button>` : '<span class="linha-sub">você</span>'}
+                </div>`).join('')}
+            </div>
+          </div>
         </div>
-        <div class="lista" style="gap: 8px">
-          ${emp.usuarios.map(u => `
-            <div class="linha linha-inset" style="padding: 10px 14px; ${u.ativo ? '' : 'opacity: 0.55'}">
-              <div class="avatar" style="width: 36px; height: 36px; font-size: 0.9rem">${esc(String(u.nome).trim().charAt(0).toUpperCase())}</div>
-              <div style="flex: 1">
-                <div class="linha-titulo" style="font-size: 0.92rem">${esc(u.nome)}</div>
-                <div class="linha-sub">${esc(u.email)}</div>
-              </div>
-              <span class="chip ${u.permissoes === 'ADMINISTRADOR' ? 'acento' : ''}">${u.permissoes === 'ADMINISTRADOR' ? 'Admin' : 'Atendente'}</span>
-              ${u.id !== sessao.usuario.id ? `
-                <button class="btn-fantasma btn-mini ${u.ativo ? 'perigo' : ''}" data-alternar="${u.id}" data-ativo="${u.ativo}" type="button">
-                  ${u.ativo ? 'Desativar' : 'Reativar'}
-                </button>` : '<span class="linha-sub">você</span>'}
-            </div>`).join('')}
+
+        <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+          <div class="rotulo-secao">Funcionamento da agenda</div>
+          <div style="display: flex; flex-direction: column; gap: 14px" id="funcionamento">
+            ${DIAS_SEMANA.map((nome, dia) => `
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <div style="display: flex; justify-content: space-between; align-items: center">
+                  <div style="font-size: 0.9rem; font-weight: 600">${nome}</div>
+                  <button type="button" class="btn-fantasma btn-mini" data-mais-periodo="${dia}">Adicionar período</button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px" data-periodos="${dia}">
+                  ${(porDia.get(dia) || []).map(p => linhaPeriodo(dia, p)).join('') ||
+                    '<div class="linha-sub" data-fechado>Fechado</div>'}
+                </div>
+              </div>`).join('')}
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div class="campo"><label>Leva-e-traz: deslocamento (min)</label>
+              <input id="campo-desloc" type="number" min="5" max="180" step="5" value="${agenda.tempo_deslocamento_minutos}"></div>
+            <div class="campo"><label>Grade de horários (min)</label>
+              <select id="campo-grade">
+                ${[5, 10, 15, 20, 30, 60].map(v => `<option value="${v}" ${agenda.intervalo_grade_minutos === v ? 'selected' : ''}>${v} em ${v}</option>`).join('')}
+              </select></div>
+          </div>
+          <button class="btn-primario" id="botao-salvar-agenda" type="button" style="align-self: flex-start">Salvar funcionamento</button>
+
+          <div style="border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div class="rotulo-secao">Dias fechados (exceções)</div>
+              <button class="btn-fantasma btn-mini" id="botao-nova-excecao" type="button">Fechar um dia</button>
+            </div>
+            ${agenda.excecoes.length ? agenda.excecoes.map(e => `
+              <div class="linha linha-inset" style="padding: 8px 14px">
+                <div style="flex: 1; font-size: 0.9rem">${dataLonga(e.data)}${e.motivo ? ` · ${esc(e.motivo)}` : ''}</div>
+                <button class="btn-fantasma btn-mini perigo" data-remover-excecao="${e.id}" type="button">Reabrir</button>
+              </div>`).join('') : '<div class="linha-sub">Nenhuma exceção futura.</div>'}
+          </div>
         </div>
       </div>`;
 
+    // Dados do petshop
     document.getElementById('form-empresa').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const f = new FormData(ev.target);
@@ -854,6 +1464,114 @@
       } catch (err) { toast(err.message, true); }
     });
 
+    // Funcionamento
+    const funcionamento = document.getElementById('funcionamento');
+    function ligarPeriodos() {
+      funcionamento.querySelectorAll('[data-remover-periodo]').forEach(b => {
+        b.onclick = () => {
+          const caixa = b.closest('.periodo-linha').parentElement;
+          b.closest('.periodo-linha').remove();
+          if (!caixa.querySelector('.periodo-linha')) {
+            caixa.innerHTML = '<div class="linha-sub" data-fechado>Fechado</div>';
+          }
+        };
+      });
+    }
+    funcionamento.querySelectorAll('[data-mais-periodo]').forEach(b =>
+      b.addEventListener('click', () => {
+        const dia = b.dataset.maisPeriodo;
+        const caixa = funcionamento.querySelector(`[data-periodos="${dia}"]`);
+        const fechado = caixa.querySelector('[data-fechado]');
+        if (fechado) fechado.remove();
+        caixa.insertAdjacentHTML('beforeend', linhaPeriodo(dia, null));
+        ligarPeriodos();
+      }));
+    ligarPeriodos();
+
+    document.getElementById('botao-salvar-agenda').addEventListener('click', async () => {
+      const horarios = [...funcionamento.querySelectorAll('.periodo-linha')].map(linha => ({
+        dia_semana: parseInt(linha.dataset.dia, 10),
+        inicio: linha.querySelector('[name="periodo_inicio"]').value,
+        fim: linha.querySelector('[name="periodo_fim"]').value,
+      })).filter(h => h.inicio && h.fim);
+      try {
+        await api('/agenda/config', { method: 'PUT', body: {
+          horarios,
+          tempo_deslocamento_minutos: parseInt(document.getElementById('campo-desloc').value, 10),
+          intervalo_grade_minutos: parseInt(document.getElementById('campo-grade').value, 10),
+        }});
+        toast('Funcionamento salvo.');
+      } catch (err) { toast(err.message, true); }
+    });
+
+    // Recursos
+    document.getElementById('botao-novo-recurso').addEventListener('click', () => {
+      const modal = abrirModal(`
+        <h3>Adicionar recurso</h3>
+        <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+          <div class="campo"><label>Nome</label><input name="nome" placeholder="Atendimento 2 / Van" required></div>
+          <div class="campo"><label>Tipo</label>
+            <select name="tipo">
+              <option value="ATENDIMENTO">Linha de atendimento</option>
+              <option value="VEICULO">Veículo (leva-e-traz)</option>
+            </select>
+          </div>
+          ${rodapeModal('Adicionar')}
+        </form>`);
+      ligarFechar(modal);
+      modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const f = new FormData(ev.target);
+        try {
+          await api('/agenda/recursos', { method: 'POST', body: { nome: f.get('nome'), tipo: f.get('tipo') } });
+          fecharModal(); toast('Recurso adicionado.'); verConfig();
+        } catch (err) { toast(err.message, true); }
+      });
+    });
+    conteudo.querySelectorAll('[data-alternar-recurso]').forEach(b =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/agenda/recursos/${b.dataset.alternarRecurso}`, {
+            method: 'PUT', body: { nome: b.dataset.nome, ativo: b.dataset.ativo !== 'true' },
+          });
+          toast('Recurso atualizado.'); verConfig();
+        } catch (err) { toast(err.message, true); }
+      }));
+
+    // Exceções
+    document.getElementById('botao-nova-excecao').addEventListener('click', () => {
+      const modal = abrirModal(`
+        <h3>Fechar um dia</h3>
+        <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+          <div class="campo"><label>Data</label><input name="data" type="date" min="${hojeISO()}" required></div>
+          <div class="campo"><label>Motivo (opcional)</label><input name="motivo" placeholder="Feriado"></div>
+          ${rodapeModal('Fechar agenda')}
+        </form>`);
+      ligarFechar(modal);
+      modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const f = new FormData(ev.target);
+        try {
+          const r = await api('/agenda/excecoes', { method: 'POST', body: { data: f.get('data'), motivo: f.get('motivo') } });
+          fecharModal();
+          if (r.agendamentos_afetados > 0) {
+            toast(`Dia fechado — atenção: ${r.agendamentos_afetados} agendamento(s) neste dia precisam ser reagendados.`, true);
+          } else {
+            toast('Dia fechado na agenda.');
+          }
+          verConfig();
+        } catch (err) { toast(err.message, true); }
+      });
+    });
+    conteudo.querySelectorAll('[data-remover-excecao]').forEach(b =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/agenda/excecoes/${b.dataset.removerExcecao}`, { method: 'DELETE' });
+          toast('Dia reaberto.'); verConfig();
+        } catch (err) { toast(err.message, true); }
+      }));
+
+    // Equipe
     document.getElementById('botao-novo-usuario').addEventListener('click', modalNovoUsuario);
     conteudo.querySelectorAll('[data-alternar]').forEach(b =>
       b.addEventListener('click', async () => {
@@ -892,12 +1610,14 @@
     });
   }
 
-  // ─── Roteador ────────────────────────────────────────────────────
+  // ═══ Roteador ════════════════════════════════════════════════════
 
   function marcarAba(rota) {
     document.querySelectorAll('#abas .aba').forEach(a => {
       const alvo = a.getAttribute('href').replace('#/', '');
-      a.classList.toggle('ativa', rota === alvo || (alvo === 'clientes' && rota.startsWith('cliente')));
+      a.classList.toggle('ativa', rota === alvo ||
+        (alvo === 'clientes' && rota.startsWith('cliente')) ||
+        (alvo === 'agenda' && rota.startsWith('agenda')));
     });
   }
 
@@ -916,9 +1636,10 @@
     }
 
     try {
-      if (rota === 'clientes') await verClientes();
+      if (rota === 'agenda') await verAgenda(parametro);
+      else if (rota === 'clientes') await verClientes();
       else if (rota === 'cliente' && parametro) await verFicha(parseInt(parametro, 10));
-      else if (rota === 'pacotes') await verPacotes();
+      else if (rota === 'catalogo') await verCatalogo();
       else if (rota === 'config') await verConfig();
       else await verVisao();
     } catch (err) {
@@ -934,7 +1655,7 @@
     sessao = await api('/auth/me');
   }
 
-  // ─── Boot ────────────────────────────────────────────────────────
+  // ═══ Boot ════════════════════════════════════════════════════════
 
   document.getElementById('botao-sair').addEventListener('click', sair);
   window.addEventListener('hashchange', renderizar);

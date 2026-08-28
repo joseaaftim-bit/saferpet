@@ -33,8 +33,10 @@ app.use('/api/hub', require('./rotas/hub'));
 const protegido = [validarJwt, exigirAcessoVigente];
 app.use('/api/clientes', protegido, require('./rotas/clientes'));
 app.use('/api/pets', protegido, require('./rotas/pets'));
+app.use('/api/servicos', protegido, require('./rotas/servicos'));
 app.use('/api/pacotes', protegido, require('./rotas/pacotes'));
 app.use('/api/baixas', protegido, require('./rotas/baixas'));
+app.use('/api/agenda', protegido, require('./rotas/agenda'));
 app.use('/api/dashboard', protegido, require('./rotas/dashboard'));
 app.use('/api/empresa', protegido, require('./rotas/empresa'));
 

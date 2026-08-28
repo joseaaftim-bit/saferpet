@@ -92,6 +92,27 @@ router.post('/registrar', limiteRegistrar, async (req, res, next) => {
          RETURNING id, nome, email, permissoes, empresa_id`,
         [empresaId, String(nome).trim(), emailLimpo, senhaHash]
       );
+
+      // Defaults para a agenda nascer funcionando: um serviço, um recurso
+      // de atendimento e horário comercial (o petshop ajusta depois).
+      await query(
+        `INSERT INTO servicos (empresa_id, nome, duracao_minutos, preco_centavos)
+         VALUES ($1, 'Banho', 30, 0)`,
+        [empresaId]
+      );
+      await query(
+        `INSERT INTO recursos (empresa_id, nome, tipo) VALUES ($1, 'Atendimento 1', 'ATENDIMENTO')`,
+        [empresaId]
+      );
+      const padrao = [[1, '08:00', '18:00'], [2, '08:00', '18:00'], [3, '08:00', '18:00'],
+                      [4, '08:00', '18:00'], [5, '08:00', '18:00'], [6, '08:00', '12:00']];
+      for (const [dia, inicio, fim] of padrao) {
+        await query(
+          'INSERT INTO agenda_horarios (empresa_id, dia_semana, inicio, fim) VALUES ($1, $2, $3, $4)',
+          [empresaId, dia, inicio, fim]
+        );
+      }
+
       return { ...usr.recordset[0], plano: emp.recordset[0].plano };
     });
 

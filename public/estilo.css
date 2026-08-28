@@ -221,8 +221,58 @@ a:hover { color: var(--primary); }
 .portal { max-width: 430px; margin: 0 auto; padding: 26px 20px 32px; display: flex; flex-direction: column; gap: 16px; }
 .portal-saldo { font-family: var(--fonte-titulo); font-size: 3.4rem; font-weight: 550; letter-spacing: -0.02em; line-height: 1; }
 
+/* ─── Agenda (grade do dia) ─── */
+.agenda-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agenda-data {
+  font-family: var(--fonte-titulo); font-size: 1.15rem; font-weight: 550;
+  min-width: 210px; text-align: center;
+}
+.agenda-grade {
+  display: grid; gap: 0; background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow-card); overflow: hidden;
+}
+.agenda-cabecalho {
+  padding: 10px 12px; font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border); text-align: center; background: var(--bg-inset);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agenda-horas { position: relative; border-left: none; }
+.agenda-coluna { position: relative; border-left: 1px solid var(--border); }
+.agenda-hora {
+  position: absolute; right: 8px; transform: translateY(-50%);
+  font-size: 0.72rem; color: var(--text-subtle); font-variant-numeric: tabular-nums;
+}
+.agenda-linha-hora { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); opacity: 0.6; }
+.agenda-fora { position: absolute; left: 0; right: 0; background: var(--bg-inset); opacity: 0.7; }
+.agenda-bloco {
+  position: absolute; left: 4px; right: 4px; border-radius: 8px; padding: 3px 8px;
+  font-size: 0.74rem; font-weight: 600; cursor: pointer; overflow: hidden;
+  border: 1px solid var(--primary-ink); background: var(--primary); color: #fff;
+  line-height: 1.25;
+}
+.agenda-bloco small { display: block; font-weight: 500; opacity: 0.85; font-size: 0.68rem; }
+.agenda-bloco.rota { background: var(--primary-soft); color: var(--primary-ink); border-color: var(--primary-border); }
+.agenda-bloco.concluido { background: var(--success-soft); color: var(--success); border-color: var(--success); }
+.agenda-bloco.faltou { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+
+.pilulas-horario { display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow-y: auto; }
+.pilula-horario {
+  padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--bg-panel); font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  font-variant-numeric: tabular-nums; color: var(--text-main);
+}
+.pilula-horario:hover { border-color: var(--primary); }
+.pilula-horario.escolhida { background: var(--primary); color: #fff; border-color: var(--primary-ink); }
+
+/* Barrinha de crédito por serviço */
+.credito-linha { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; }
+.credito-nome { flex: 1; font-weight: 600; }
+.credito-numeros { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 @media (max-width: 720px) {
   .topo { padding: 12px 16px; }
   .conteudo { padding: 20px 14px 48px; }
   .linha { flex-wrap: wrap; }
+  .agenda-data { min-width: 150px; font-size: 1rem; }
 }

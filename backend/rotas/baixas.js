@@ -2,7 +2,8 @@
 
 const express = require('express');
 const { executeQuery, comTransacao } = require('../database');
-const { hojeSaoPaulo, vencido } = require('../util/datas');
+const { hojeSaoPaulo } = require('../util/datas');
+const { consumirUmCredito, saldosPorServico } = require('../util/creditos');
 
 const router = express.Router();
 
@@ -10,116 +11,69 @@ function erroNegocio(mensagem, statusHttp) {
   return Object.assign(new Error(mensagem), { statusHttp });
 }
 
-// ─── Registrar baixa(s) ────────────────────────────────────────────
-// Uma requisição pode debitar vários banhos de uma vez (mandou as duas
-// cachorras: 2 itens, 2 baixas). Tudo em UMA transação com as linhas dos
-// pacotes do cliente travadas (FOR UPDATE) — duas atendentes registrando
-// ao mesmo tempo nunca deixam o saldo negativo nem furam a contagem.
-//
-// Transbordo FIFO: se o pacote alvo não cobre todos os itens, o resto sai
-// dos demais pacotes ATIVO (não vencidos) do mesmo cliente, do mais antigo
-// para o mais novo. Cliente com 1 banho no pacote velho + 24 no novo dá
-// baixa das duas cachorras numa operação só.
+// ─── Baixa manual (balcão, sem agendamento) ────────────────────────
+// Cada item nomeia o serviço consumido; o crédito sai do pacote mais
+// antigo do cliente que tenha aquele serviço (FIFO), tudo em UMA transação.
+// Sem crédito para algum item, NADA é gravado (409).
 
 router.post('/', async (req, res, next) => {
   try {
-    const { pacote_id, itens, observacao } = req.body || {};
-    const pacoteId = parseInt(pacote_id, 10);
+    const { cliente_id, itens, observacao } = req.body || {};
+    const clienteId = parseInt(cliente_id, 10);
 
-    if (!Number.isInteger(pacoteId)) {
-      return res.status(400).json({ erro: 'Informe o pacote.' });
+    if (!Number.isInteger(clienteId)) {
+      return res.status(400).json({ erro: 'Informe o cliente.' });
     }
     if (!Array.isArray(itens) || !itens.length || itens.length > 10) {
-      return res.status(400).json({ erro: 'Informe de 1 a 10 banhos por vez.' });
+      return res.status(400).json({ erro: 'Informe de 1 a 10 itens por vez.' });
     }
-    for (const item of itens) {
-      if (item && item.pet_id !== undefined && item.pet_id !== null &&
-          !Number.isInteger(parseInt(item.pet_id, 10))) {
-        return res.status(400).json({ erro: 'Pet inválido.' });
-      }
-    }
+    const empresaId = req.usuario.empresa_id;
 
     const resultado = await comTransacao(async (query) => {
-      const rp = await query(
-        `SELECT id, cliente_id, qtd_banhos, saldo, status, validade_ate
-           FROM pacotes WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
-        [pacoteId, req.usuario.empresa_id]
+      const rc = await query(
+        'SELECT id FROM clientes WHERE id = $1 AND empresa_id = $2 AND ativo',
+        [clienteId, empresaId]
       );
-      const alvo = rp.recordset[0];
-      if (!alvo) throw erroNegocio('Pacote não encontrado.', 404);
-      if (alvo.status !== 'ATIVO') {
-        throw erroNegocio(`Este pacote está ${String(alvo.status).toLowerCase()} — não é possível dar baixa.`, 409);
-      }
-      const hoje = hojeSaoPaulo();
-      if (vencido(alvo.validade_ate, hoje)) {
-        throw erroNegocio('Este pacote está vencido. Um administrador pode prorrogar a validade na ficha do cliente.', 409);
-      }
+      if (!rc.recordset.length) throw erroNegocio('Cliente não encontrado.', 404);
 
-      // Todos os pacotes ATIVO do cliente, travados em ordem estável.
-      const rTodos = await query(
-        `SELECT id, saldo, status, validade_ate
-           FROM pacotes
-          WHERE cliente_id = $1 AND empresa_id = $2 AND status = 'ATIVO'
-          ORDER BY criado_em, id
-          FOR UPDATE`,
-        [alvo.cliente_id, req.usuario.empresa_id]
-      );
-      const demais = rTodos.recordset
-        .filter(p => p.id !== alvo.id && !vencido(p.validade_ate, hoje));
-      const fila = [
-        { id: alvo.id, saldo: alvo.saldo },
-        ...demais.map(p => ({ id: p.id, saldo: p.saldo })),
-      ];
-
-      const saldoTotal = fila.reduce((soma, p) => soma + p.saldo, 0);
-      if (saldoTotal < itens.length) {
-        throw erroNegocio(`Saldo insuficiente: restam ${saldoTotal} banho(s) para este cliente.`, 409);
-      }
-
-      let posicao = 0;
       const registradas = [];
-      const tocados = new Map();
       for (const item of itens) {
-        const petId = item && item.pet_id !== undefined && item.pet_id !== null
-          ? parseInt(item.pet_id, 10) : null;
+        const servicoId = parseInt(item && item.servico_id, 10);
+        if (!Number.isInteger(servicoId)) throw erroNegocio('Serviço inválido.', 400);
 
+        const petId = item && item.pet_id !== undefined && item.pet_id !== null && item.pet_id !== ''
+          ? parseInt(item.pet_id, 10) : null;
         if (petId !== null) {
-          const rpet = await query(
+          if (!Number.isInteger(petId)) throw erroNegocio('Pet inválido.', 400);
+          const rp = await query(
             'SELECT id FROM pets WHERE id = $1 AND empresa_id = $2 AND cliente_id = $3 AND ativo',
-            [petId, req.usuario.empresa_id, alvo.cliente_id]
+            [petId, empresaId, clienteId]
           );
-          if (!rpet.recordset.length) {
-            throw erroNegocio('Pet não pertence ao dono deste pacote.', 400);
-          }
+          if (!rp.recordset.length) throw erroNegocio('Pet não pertence a este cliente.', 400);
         }
 
-        while (fila[posicao].saldo === 0) posicao += 1;
-        const fonte = fila[posicao];
-        fonte.saldo -= 1;
-        tocados.set(fonte.id, fonte.saldo);
-
-        const servico = String((item && item.servico) || 'Banho').trim().slice(0, 120) || 'Banho';
-        const rb = await query(
-          `INSERT INTO baixas (empresa_id, pacote_id, pet_id, servico, observacao,
-                               saldo_apos, registrado_por)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id, pacote_id, pet_id, servico, saldo_apos, registrado_em`,
-          [req.usuario.empresa_id, fonte.id, petId, servico,
-           String(observacao || '').trim() || null, fonte.saldo, req.usuario.id]
+        const rs = await query(
+          'SELECT nome FROM servicos WHERE id = $1 AND empresa_id = $2',
+          [servicoId, empresaId]
         );
-        registradas.push(rb.recordset[0]);
+        if (!rs.recordset.length) throw erroNegocio('Serviço não encontrado.', 404);
+
+        const baixa = await consumirUmCredito(query, {
+          empresaId, clienteId, servicoId,
+          servicoNome: rs.recordset[0].nome, petId,
+          observacao: String(observacao || '').trim() || null,
+          usuarioId: req.usuario.id,
+        });
+        if (!baixa) {
+          throw erroNegocio(`Cliente sem crédito de "${rs.recordset[0].nome}" disponível.`, 409);
+        }
+        registradas.push(baixa);
       }
 
-      for (const [id, saldo] of tocados) {
-        await query(
-          'UPDATE pacotes SET saldo = $1, status = $2 WHERE id = $3 AND empresa_id = $4',
-          [saldo, saldo === 0 ? 'ESGOTADO' : 'ATIVO', id, req.usuario.empresa_id]
-        );
-      }
-
-      const saldoRestante = fila.reduce((soma, p) => soma + p.saldo, 0);
-      const statusAlvo = fila[0].saldo === 0 ? 'ESGOTADO' : 'ATIVO';
-      return { saldo: saldoRestante, status: statusAlvo, baixas: registradas };
+      const saldos = await saldosPorServico(query, empresaId, clienteId);
+      let saldoTotal = 0;
+      for (const total of saldos.values()) saldoTotal += total;
+      return { baixas: registradas, saldo: saldoTotal };
     });
 
     res.status(201).json(resultado);
@@ -130,28 +84,31 @@ router.post('/', async (req, res, next) => {
 });
 
 // ─── Estorno ───────────────────────────────────────────────────────
-// Corrige registro errado sem apagar nada: a baixa fica marcada como
-// estornada e o saldo volta. Atendente só estorna baixa do mesmo dia;
-// administrador estorna qualquer uma.
+// Devolve 1 crédito ao ITEM de onde saiu. Atendente só estorna baixa do
+// mesmo dia; administrador estorna qualquer uma.
 
 router.post('/:id/estornar', async (req, res, next) => {
   try {
     const baixaId = parseInt(req.params.id, 10);
     if (!Number.isInteger(baixaId)) return res.status(404).json({ erro: 'Baixa não encontrada.' });
+    const empresaId = req.usuario.empresa_id;
 
     const resultado = await comTransacao(async (query) => {
       const rb = await query(
-        `SELECT b.id, b.pacote_id, b.estornada, b.registrado_em,
-                p.saldo, p.qtd_banhos, p.status, p.validade_ate
+        `SELECT b.id, b.pacote_id, b.pacote_item_id, b.estornada, b.registrado_em,
+                p.saldo AS pacote_saldo, p.qtd_banhos, p.status,
+                i.saldo AS item_saldo, i.quantidade AS item_quantidade
            FROM baixas b
            JOIN pacotes p ON p.id = b.pacote_id
+           LEFT JOIN pacotes_itens i ON i.id = b.pacote_item_id
           WHERE b.id = $1 AND b.empresa_id = $2
           FOR UPDATE OF b, p`,
-        [baixaId, req.usuario.empresa_id]
+        [baixaId, empresaId]
       );
       const baixa = rb.recordset[0];
       if (!baixa) throw erroNegocio('Baixa não encontrada.', 404);
       if (baixa.estornada) throw erroNegocio('Esta baixa já foi estornada.', 409);
+      if (!baixa.pacote_item_id) throw erroNegocio('Baixa antiga sem item de crédito — estorno manual pelo suporte.', 409);
 
       if (req.usuario.permissoes !== 'ADMINISTRADOR') {
         const dataBaixa = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' })
@@ -160,24 +117,27 @@ router.post('/:id/estornar', async (req, res, next) => {
           throw erroNegocio('Atendente só estorna baixa do mesmo dia. Peça a um administrador.', 403);
         }
       }
-      if (baixa.saldo >= baixa.qtd_banhos) {
-        throw erroNegocio('O saldo deste pacote já está cheio — nada a estornar.', 409);
+      if (baixa.item_saldo >= baixa.item_quantidade) {
+        throw erroNegocio('O crédito deste item já está cheio — nada a estornar.', 409);
       }
 
       await query(
         `UPDATE baixas SET estornada = TRUE, estornada_por = $1, estornada_em = NOW()
           WHERE id = $2 AND empresa_id = $3`,
-        [req.usuario.id, baixaId, req.usuario.empresa_id]
+        [req.usuario.id, baixaId, empresaId]
       );
-
-      const novoSaldo = baixa.saldo + 1;
+      await query(
+        'UPDATE pacotes_itens SET saldo = saldo + 1 WHERE id = $1 AND empresa_id = $2',
+        [baixa.pacote_item_id, empresaId]
+      );
+      const novoSaldoPacote = baixa.pacote_saldo + 1;
       const novoStatus = baixa.status === 'ESGOTADO' ? 'ATIVO' : baixa.status;
       await query(
         'UPDATE pacotes SET saldo = $1, status = $2 WHERE id = $3 AND empresa_id = $4',
-        [novoSaldo, novoStatus, baixa.pacote_id, req.usuario.empresa_id]
+        [novoSaldoPacote, novoStatus, baixa.pacote_id, empresaId]
       );
 
-      return { saldo: novoSaldo, status: novoStatus };
+      return { saldo: novoSaldoPacote, status: novoStatus };
     });
 
     res.json(resultado);

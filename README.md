@@ -1,12 +1,15 @@
 # SaferPet
 
-SaaS de controle de **pacotes pré-pagos de banho** para petshop. Substitui o
-caderno a caneta: o cliente compra um pacote (ex.: 24 banhos por R$ 700), cada
-banho vira uma **baixa** registrada com quem/quando, e o saldo nunca se perde.
-O cliente acompanha tudo por um **link de portal** sem senha.
+Plataforma de petshop da SaferSoftware: **pacotes pré-pagos com créditos por
+serviço** e **agenda inteligente por duração**. O petshop cadastra os serviços
+que quiser (banho 30 min, banho e tosa 45 min...), monta pacotes livres
+(ex.: 20 banhos + 4 tosas por R$ 700), e a agenda calcula os horários pela
+duração: agendou 45 min às 10:00, o próximo livre é 10:45. **Leva-e-traz** de
+verdade: o veículo é um recurso com agenda própria — a busca bloqueia o
+deslocamento antes do serviço e a entrega entra no primeiro encaixe depois.
+O cliente acompanha créditos e agendamentos por um **link de portal** sem senha.
 
-Produto da SaferSoftware. Primeiro caso de uso: Salva Patas Pet Spa & Vet
-(Campo Grande/MS).
+Primeiro caso de uso: Salva Patas Pet Spa & Vet (Campo Grande/MS).
 
 ## Arquitetura
 
@@ -21,21 +24,25 @@ Monorepo de origem única, sem build step:
 
 ## Fluxo
 
-1. Petshop cria a conta (`/`) — nasce com plano `TRIAL` (14 dias).
-2. Cadastra clientes e pets; monta o catálogo de pacotes (aba Pacotes).
-3. Vende um pacote ao cliente (do catálogo ou avulso) — o pagamento acontece
-   no balcão do petshop; o sistema registra valor e saldo.
-4. A cada banho, **Dar baixa**: escolhe os pets, o saldo desconta em transação
-   com as linhas dos pacotes travadas (`FOR UPDATE`) — sem corrida, sem saldo
-   negativo. Com mais de um pacote ativo, consome-se o mais antigo primeiro e,
-   se ele não cobrir tudo, o resto **transborda** para o pacote seguinte na
-   mesma operação (1 banho no velho + 24 no novo dá baixa das duas pets de uma vez).
-5. Registro errado se resolve com **estorno** (marca a baixa e devolve o
-   saldo; nada é apagado). Atendente estorna só no mesmo dia; admin, sempre.
-6. Pacote vencido bloqueia a baixa na hora (não depende do cron); o admin
-   **reativa** pelo botão na ficha, definindo validade nova. Cancelamento por
-   engano também se desfaz por ali.
-7. O cliente acompanha pelo link do portal (botão "Link do portal" na ficha).
+1. Petshop cria a conta (`/`) — nasce com plano `TRIAL` (14 dias), o serviço
+   "Banho", uma linha de atendimento e horário comercial padrão.
+2. **Catálogo**: serviços com duração e preço próprios; modelos de pacote com
+   itens de qualquer serviço (20 banhos + 4 tosas).
+3. **Configurações**: dias/períodos de funcionamento, linhas de atendimento
+   simultâneo, veículos do leva-e-traz, tempo de deslocamento, dias fechados.
+4. **Agenda**: grade do dia por recurso; horários ofertados são calculados
+   pela duração do serviço e pela agenda do veículo (leva-e-traz exige o
+   deslocamento livre ANTES do início). Criação revalida o horário dentro de
+   transação com trava por empresa — duas atendentes não agendam o mesmo slot.
+5. **Concluir** um atendimento consome 1 crédito daquele serviço (FIFO entre
+   pacotes, pacote vencido não conta); sem crédito, avisa para cobrar na hora.
+   Baixa manual no balcão também existe, por serviço.
+6. Registro errado se resolve com **estorno** (devolve o crédito ao item;
+   nada é apagado). Atendente estorna só no mesmo dia; admin, sempre.
+7. Pacote vencido bloqueia baixa na hora; admin **reativa** pela ficha com
+   validade nova. Recurso com agendamentos futuros não pode ser desativado.
+8. O cliente acompanha créditos por serviço e próximos agendamentos pelo
+   link do portal (botão "Link do portal" na ficha).
 
 ## Variáveis de ambiente (Railway)
 
@@ -92,9 +99,16 @@ node scripts/testar-api.mjs https://pet.safersoftware.com.br
   regenerar (invalida o link antigo). Sem pagamento online no v1 — não há
   webhook exposto.
 
-## Roadmap curto
+## Roadmap (plano SaferPet 2.0)
 
-- Cobrança da assinatura do petshop (Mercado Pago, no padrão da casa:
-  webhook fecha por padrão, preço na tabela do servidor, liberação em transação).
+- **Fase 2** — conta do cliente: compra de pacote online (Mercado Pago do
+  petshop, webhook fecha por padrão), agendamento pelo próprio cliente,
+  avisos no WhatsApp.
+- **Fase 3** — loja de produtos com entrega na rota do leva-e-traz.
+- **Fase 4** — foto do pet pronto, assinatura recorrente, carteirinha de
+  vacinação, fila de encaixe, relatórios.
 - Plugar no Safer Hub (rota `/api/hub/metrics` já pronta, falta o card no Hub).
-- Agenda de banhos (hoje o agendamento segue pelo WhatsApp).
+
+Nota de teste: o pg-mem não valida `FOR UPDATE` (os harnesses removem a
+cláusula). Toda query nova com `FOR UPDATE` sobre join precisa de `OF` nos
+lados internos — conferir manualmente ou na fumaça contra Postgres real.

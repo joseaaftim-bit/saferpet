@@ -29,12 +29,26 @@ router.get('/', async (req, res, next) => {
     const { inicio, fim } = limitesDeHoje();
     const empresaId = req.usuario.empresa_id;
 
-    const [banhosHoje, pacotesAtivos, acabando, clientes] = await Promise.all([
+    const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+
+    const [banhosHoje, agendadosHoje, retiradasHoje, pacotesAtivos, acabando, clientes] = await Promise.all([
       executeQuery(
         `SELECT COUNT(*)::int AS total FROM baixas
           WHERE empresa_id = $1 AND estornada = FALSE
             AND registrado_em >= $2 AND registrado_em < $3`,
         [empresaId, inicio, fim]
+      ),
+      executeQuery(
+        `SELECT COUNT(*)::int AS total FROM agendamentos
+          WHERE empresa_id = $1 AND data = $2 AND tipo = 'SERVICO'
+            AND status IN ('AGENDADO', 'CONCLUIDO')`,
+        [empresaId, hoje]
+      ),
+      executeQuery(
+        `SELECT COUNT(*)::int AS total FROM agendamentos
+          WHERE empresa_id = $1 AND data = $2 AND tipo IN ('BUSCA', 'ENTREGA')
+            AND status = 'AGENDADO'`,
+        [empresaId, hoje]
       ),
       executeQuery(
         `SELECT COUNT(*)::int AS total FROM pacotes
@@ -55,6 +69,8 @@ router.get('/', async (req, res, next) => {
 
     res.json({
       banhos_hoje: banhosHoje.recordset[0].total,
+      agendados_hoje: agendadosHoje.recordset[0].total,
+      retiradas_hoje: retiradasHoje.recordset[0].total,
       pacotes_ativos: pacotesAtivos.recordset[0].total,
       saldos_acabando: acabando.recordset[0].total,
       clientes_ativos: clientes.recordset[0].total,

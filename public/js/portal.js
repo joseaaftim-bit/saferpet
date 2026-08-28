@@ -63,10 +63,18 @@
         <div style="display: flex; align-items: baseline; gap: 10px">
           <div class="portal-saldo">${pacote.saldo}</div>
           <div style="font-size: 0.95rem; color: var(--text-muted)">
-            banho${pacote.saldo === 1 ? '' : 's'} restante${pacote.saldo === 1 ? '' : 's'}
+            crédito${pacote.saldo === 1 ? '' : 's'} restante${pacote.saldo === 1 ? '' : 's'}
           </div>
         </div>
         <div class="barra" style="height: 9px"><div class="${acabando ? 'baixa' : ''}" style="width: ${percentual}%"></div></div>
+        ${(pacote.itens || []).length > 1 ? `
+        <div style="display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px">
+          ${pacote.itens.map(i => `
+            <div style="display: flex; justify-content: space-between; font-size: 0.82rem">
+              <span style="font-weight: 600">${esc(i.servico_nome)}</span>
+              <span style="color: var(--text-muted); font-variant-numeric: tabular-nums">${i.saldo} de ${i.quantidade}</span>
+            </div>`).join('')}
+        </div>` : ''}
         <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-subtle)">
           <span>${esc(pacote.nome)}</span>
           <span>${pacote.validade_ate ? 'válido até ' + dataLonga(pacote.validade_ate) : 'sem validade'}</span>
@@ -74,7 +82,7 @@
         ${proximos.map(p => `
         <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px">
           <span>Próximo: ${esc(p.nome)}</span>
-          <span>+${p.saldo} banho${p.saldo === 1 ? '' : 's'}</span>
+          <span>+${p.saldo} crédito${p.saldo === 1 ? '' : 's'}</span>
         </div>`).join('')}
       </div>` : `
       <div class="vazio">Nenhum pacote ativo no momento.<br>Fale com o petshop para contratar.</div>`}
@@ -89,16 +97,31 @@
         <div style="color: var(--primary-ink)">${PATA}</div>
       </div>` : ''}
 
+      ${(dados.agendamentos || []).length ? `
+      <div class="cartao" style="padding: 18px; display: flex; flex-direction: column; gap: 12px">
+        <div class="rotulo-secao" style="font-size: 0.7rem">Próximos agendamentos</div>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          ${dados.agendamentos.map(a => `
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 12px">
+              <div style="font-family: var(--fonte-titulo); font-size: 1rem; font-weight: 550; color: var(--primary-ink); min-width: 52px; font-variant-numeric: tabular-nums">${dataCurta(`${String(a.data).slice(0, 10)}T12:00:00`)}</div>
+              <div style="flex: 1">
+                <div style="font-size: 0.86rem; font-weight: 600">${a.inicio} · ${esc(a.servico_nome || '')}</div>
+                <div style="font-size: 0.74rem; color: var(--text-muted)">${a.pet_nome ? esc(a.pet_nome) : ''}${a.leva_traz ? ' · vamos buscar em casa' : ''}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+
       ${(dados.ultimas_baixas || []).length ? `
       <div class="cartao" style="padding: 18px; display: flex; flex-direction: column; gap: 12px">
-        <div class="rotulo-secao">Últimos banhos</div>
+        <div class="rotulo-secao">Últimos serviços</div>
         <div class="lista" style="gap: 8px">
           ${dados.ultimas_baixas.map(b => `
             <div class="linha linha-inset" style="padding: 10px 14px">
               <div class="linha-data" style="font-size: 1rem; min-width: 52px">${dataCurta(b.registrado_em)}</div>
               <div style="flex: 1">
                 <div class="linha-titulo" style="font-size: 0.86rem">${b.pet_nome ? esc(b.pet_nome) + ' · ' : ''}${esc(b.servico)}</div>
-                <div class="linha-sub" style="font-size: 0.74rem">restavam ${b.saldo_apos}</div>
+                <div class="linha-sub" style="font-size: 0.74rem">restavam ${b.saldo_apos} deste serviço</div>
               </div>
             </div>`).join('')}
         </div>

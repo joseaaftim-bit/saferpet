@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { executeQuery } = require('../database');
 const { somenteAdmin } = require('../middlewares/autenticacao');
 const { APP_URL } = require('../config/segredos');
+const { hojeSaoPaulo } = require('../util/datas');
 
 const router = express.Router();
 
@@ -133,7 +134,7 @@ router.get('/:id', async (req, res, next) => {
     const cliente = rc.recordset[0];
     if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
-    const [pets, pacotes, baixas] = await Promise.all([
+    const [pets, pacotes, itens, baixas, agendamentos] = await Promise.all([
       executeQuery(
         `SELECT id, nome, raca, porte, observacoes FROM pets
           WHERE cliente_id = $1 AND empresa_id = $2 AND ativo ORDER BY nome`,
@@ -144,6 +145,14 @@ router.get('/:id', async (req, res, next) => {
                 comprado_em, validade_ate
            FROM pacotes WHERE cliente_id = $1 AND empresa_id = $2
           ORDER BY criado_em DESC`,
+        [clienteId, req.usuario.empresa_id]
+      ),
+      executeQuery(
+        `SELECT i.id, i.pacote_id, i.servico_id, i.servico_nome, i.quantidade, i.saldo
+           FROM pacotes_itens i
+           JOIN pacotes p ON p.id = i.pacote_id
+          WHERE p.cliente_id = $1 AND i.empresa_id = $2
+          ORDER BY i.id`,
         [clienteId, req.usuario.empresa_id]
       ),
       executeQuery(
@@ -159,14 +168,44 @@ router.get('/:id', async (req, res, next) => {
           LIMIT 100`,
         [clienteId, req.usuario.empresa_id]
       ),
+      executeQuery(
+        `SELECT a.id, a.data, a.inicio, a.fim, a.tipo, a.status, a.agendamento_pai_id,
+                p.nome AS pet_nome, s.nome AS servico_nome
+           FROM agendamentos a
+           LEFT JOIN pets p ON p.id = a.pet_id
+           LEFT JOIN servicos s ON s.id = a.servico_id
+          WHERE a.cliente_id = $1 AND a.empresa_id = $2
+            AND a.status = 'AGENDADO' AND a.data >= $3
+          ORDER BY a.data, a.inicio
+          LIMIT 40`,
+        [clienteId, req.usuario.empresa_id, hojeSaoPaulo()]
+      ),
     ]);
+
+    const itensPorPacote = new Map();
+    for (const item of itens.recordset) {
+      if (!itensPorPacote.has(item.pacote_id)) itensPorPacote.set(item.pacote_id, []);
+      itensPorPacote.get(item.pacote_id).push(item);
+    }
+
+    // Marca leva-e-traz juntando os filhos (BUSCA/ENTREGA) em JS — portátil.
+    const comBusca = new Set(
+      agendamentos.recordset
+        .filter(a => a.tipo === 'BUSCA' && a.agendamento_pai_id)
+        .map(a => a.agendamento_pai_id)
+    );
+    const futuros = agendamentos.recordset
+      .filter(a => a.tipo === 'SERVICO')
+      .slice(0, 20)
+      .map(a => ({ ...a, leva_traz: comBusca.has(a.id) }));
 
     res.json({
       ...cliente,
       link_portal: linkPortal(cliente.token_portal),
       pets: pets.recordset,
-      pacotes: pacotes.recordset,
+      pacotes: pacotes.recordset.map(p => ({ ...p, itens: itensPorPacote.get(p.id) || [] })),
       baixas: baixas.recordset,
+      agendamentos: futuros,
     });
   } catch (err) {
     next(err);
