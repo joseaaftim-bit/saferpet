@@ -948,6 +948,67 @@ try {
       saldoAposForja === saldoAntesForja && forjado && forjado.status === 'DIVERGENTE',
       JSON.stringify({ antes: saldoAntesForja, depois: saldoAposForja, status: forjado && forjado.status }));
 
+    // ── Pagamento que chega DEPOIS da expiração não some ──
+    const pedidoTardio = await chamar('POST', `/api/pagamentos/portal/${cli.dados.token_portal}/pedido`, {
+      corpo: { itens: [{ produto_id: produto.dados.id, quantidade: 1 }], entrega: 'RETIRADA' },
+    });
+    const paymentTardio = `pay-${preferenciasCriadas}`;
+    await pool.query(
+      `UPDATE pedidos SET criado_em = NOW() - INTERVAL '2 hours' WHERE id = ${pedidoTardio.dados.pedido_id}`
+    );
+    await rotaPagamentos.expirarPedidosAbandonados(60);
+    const estoqueAposExpirar = (await chamar('GET', '/api/loja/produtos', { token: tokenA }))
+      .dados.find(p => p.id === produto.dados.id).estoque;
+
+    await dispararWebhook(1, paymentTardio); // cliente paga depois do prazo
+    const estoqueAposPagarTarde = (await chamar('GET', '/api/loja/produtos', { token: tokenA }))
+      .dados.find(p => p.id === produto.dados.id).estoque;
+    const pedidoTardioDepois = (await chamar('GET', '/api/loja/pedidos', { token: tokenA }))
+      .dados.find(p => p.id === pedidoTardio.dados.pedido_id);
+    const pagamentoTardio = (await chamar('GET', '/api/empresa/pagamentos', { token: tokenA }))
+      .dados.find(p => p.id === pedidoTardio.dados.pagamento_id);
+    verificar('pagar depois da expiração NÃO aprova em silêncio (fica para conferência)',
+      pedidoTardioDepois.status === 'CANCELADO' &&
+      pagamentoTardio && pagamentoTardio.status === 'PENDENTE_MANUAL' &&
+      !pedidoTardioDepois.agendamento_id &&
+      estoqueAposPagarTarde === estoqueAposExpirar,
+      JSON.stringify({ pedido: pedidoTardioDepois.status, pagamento: pagamentoTardio && pagamentoTardio.status,
+                       ag: pedidoTardioDepois.agendamento_id, estoque: estoqueAposPagarTarde }));
+
+    // ── Editar produto não desfaz reserva feita no meio do caminho ──
+    const estoqueBase = (await chamar('GET', '/api/loja/produtos', { token: tokenA }))
+      .dados.find(p => p.id === produto.dados.id).estoque;
+    const reservaParalela = await chamar('POST', `/api/pagamentos/portal/${cli.dados.token_portal}/pedido`, {
+      corpo: { itens: [{ produto_id: produto.dados.id, quantidade: 1 }], entrega: 'RETIRADA' },
+    });
+    // O admin tinha a tela aberta com o estoque ANTIGO e salva sem mexer nele.
+    await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
+      nome: 'Ração Premium 10kg', preco_centavos: 25000,
+      estoque: estoqueBase, estoque_visto: estoqueBase, controla_estoque: true,
+    }});
+    const estoqueAposEdicao = (await chamar('GET', '/api/loja/produtos', { token: tokenA }))
+      .dados.find(p => p.id === produto.dados.id).estoque;
+    verificar('editar produto não desfaz a reserva de quem comprou no meio',
+      estoqueAposEdicao === estoqueBase - 1,
+      JSON.stringify({ base: estoqueBase, apos: estoqueAposEdicao }));
+
+    // ── Transição de status inválida é recusada ──
+    const voltarStatus = await chamar('PUT', `/api/loja/pedidos/${reservaParalela.dados.pedido_id}`, {
+      token: tokenA, corpo: { status: 'ENTREGUE' },
+    });
+    verificar('pedido não pago não pode ir para ENTREGUE (409)', voltarStatus.status === 409,
+      JSON.stringify(voltarStatus.dados));
+
+    // ── Cliente não segura a loja com pedidos que nunca paga ──
+    let bloqueou = false;
+    for (let i = 0; i < 4 && !bloqueou; i++) {
+      const tentativa = await chamar('POST', `/api/pagamentos/portal/${cli.dados.token_portal}/pedido`, {
+        corpo: { itens: [{ produto_id: produto.dados.id, quantidade: 1 }], entrega: 'RETIRADA' },
+      });
+      if (tentativa.status === 409) bloqueou = true;
+    }
+    verificar('cliente com pedidos abertos demais é barrado', bloqueou);
+
     // ── Webhook de outra empresa não toca o pagamento ──
     const saldoAntesCruzado = saldoAposForja;
     const compraB = await chamar('POST', `/api/pagamentos/portal/${cli.dados.token_portal}/comprar`, {

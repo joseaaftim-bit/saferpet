@@ -27,8 +27,11 @@ function proximoDia(iso) {
 }
 
 // Abrir checkout cria registro e reserva estoque: limita por IP.
+// A bateria roda dezenas de compras seguidas do mesmo IP — o limite de
+// produção só atrapalharia lá.
 const limiteCompra = rateLimit({
-  windowMs: 10 * 60 * 1000, limit: 15,
+  windowMs: 10 * 60 * 1000,
+  limit: process.env.NODE_ENV === 'test' ? 1000 : 15,
   message: { erro: 'Muitas tentativas de compra. Aguarde alguns minutos.' },
   standardHeaders: false, legacyHeaders: false, validate: false,
 });
@@ -240,6 +243,11 @@ async function processarPagamento(empresaId, empresa, paymentId) {
   const valorPago = Number(pgto.transaction_amount);
 
   await comTransacao(async (query) => {
+    // Mesma trava por empresa que a criação de agendamento usa: creditar um
+    // pedido pode inserir uma parada na agenda do veículo, e duas entregas
+    // não podem cair no mesmo horário.
+    await query('SELECT id FROM empresas WHERE id = $1 FOR UPDATE', [empresaId]);
+
     const rp = await query(
       `SELECT id, empresa_id, cliente_id, tipo, modelo_id, pedido_id,
               valor_centavos, status, pacote_id
@@ -305,13 +313,25 @@ async function processarPagamento(empresaId, empresa, paymentId) {
       if (!pedido) {
         throw new Error(`[webhook] pedido ${pagamento.pedido_id} não encontrado na empresa ${empresaId}.`);
       }
-      if (pedido.status === 'AGUARDANDO_PAGAMENTO') {
+
+      // O dinheiro entrou para um pedido que já não está aberto (expirou
+      // ou foi cancelado). NÃO aprova em silêncio, não agenda entrega:
+      // registra para o petshop devolver ou refazer na mão.
+      if (pedido.status !== 'AGUARDANDO_PAGAMENTO') {
+        console.error(`[webhook] pagamento ${pagamentoId} aprovado para pedido ${pedido.id} em ${pedido.status} — conferência manual.`);
         await query(
-          `UPDATE pedidos SET status = 'PAGO'
-            WHERE id = $1 AND empresa_id = $2 AND status = 'AGUARDANDO_PAGAMENTO'`,
-          [pagamento.pedido_id, empresaId]
+          `UPDATE pagamentos SET status = 'PENDENTE_MANUAL', mp_payment_id = $1, aprovado_em = NOW()
+            WHERE id = $2 AND empresa_id = $3`,
+          [String(paymentId), pagamentoId, empresaId]
         );
+        return;
       }
+
+      await query(
+        `UPDATE pedidos SET status = 'PAGO'
+          WHERE id = $1 AND empresa_id = $2 AND status = 'AGUARDANDO_PAGAMENTO'`,
+        [pagamento.pedido_id, empresaId]
+      );
 
       // Pedido com entrega em casa entra na rota do veículo no próximo dia
       // com janela livre. Sem janela, o petshop combina manualmente (o
@@ -455,6 +475,17 @@ router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
       const emp = rEmp.recordset[0];
       if (!emp.vende_produtos) throw erroNegocio('Este petshop ainda não vende produtos pelo aplicativo.', 409);
 
+      // Um cliente não pode segurar a loja inteira com pedidos que nunca
+      // paga: no máximo 3 pedidos aguardando pagamento por vez.
+      const abertos = await query(
+        `SELECT COUNT(*)::int AS total FROM pedidos
+          WHERE cliente_id = $1 AND empresa_id = $2 AND status = 'AGUARDANDO_PAGAMENTO'`,
+        [cliente.id, empresaId]
+      );
+      if (abertos.recordset[0].total >= 3) {
+        throw erroNegocio('Você tem pedidos aguardando pagamento. Conclua ou aguarde alguns minutos.', 409);
+      }
+
       let subtotal = 0;
       const linhas = [];
       for (const item of itens) {
@@ -526,11 +557,21 @@ router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
         urlRetorno: `${APP_URL}/portal/${req.params.token}`,
         urlWebhook: `${APP_URL}/api/pagamentos/webhook/${empresaId}`,
         emailComprador: cliente.email || undefined,
+        // Casado com o prazo de expirarPedidosAbandonados (60 min).
+        expiraEmMinutos: 55,
       });
     } catch (err) {
       console.error('[pagamentos] Falha ao criar preferência do pedido:', err.corpoMP || err.message);
-      // Devolve o estoque reservado — o pedido não vai acontecer.
+      // Devolve o estoque reservado — o pedido não vai acontecer. Com
+      // trava e guard de status: se o job de expiração já tiver devolvido,
+      // não devolve de novo.
       await comTransacao(async (query) => {
+        const rp = await query(
+          `SELECT id, status FROM pedidos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+          [criado.pedidoId, empresaId]
+        );
+        if (!rp.recordset[0] || rp.recordset[0].status !== 'AGUARDANDO_PAGAMENTO') return;
+
         const itensReservados = await query(
           'SELECT produto_id, quantidade FROM pedidos_itens WHERE pedido_id = $1 AND empresa_id = $2',
           [criado.pedidoId, empresaId]
@@ -559,6 +600,7 @@ router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
 
     res.status(201).json({
       pedido_id: criado.pedidoId,
+      pagamento_id: criado.pagamentoId,
       valor_centavos: criado.total,
       url: preferencia.init_point || preferencia.sandbox_init_point,
     });
@@ -614,6 +656,17 @@ async function expirarPedidosAbandonados(limiteMinutos = 60) {
         );
         // Pode ter sido pago entre a leitura e a trava.
         if (!rp.recordset[0] || rp.recordset[0].status !== 'AGUARDANDO_PAGAMENTO') return;
+
+        // E o pagamento? Se já não está pendente (aprovado agora mesmo,
+        // ou em conferência manual), não cancela nem devolve estoque.
+        const rpag = await query(
+          `SELECT id, status FROM pagamentos
+            WHERE pedido_id = $1 AND empresa_id = $2 AND tipo = 'PEDIDO'
+            ORDER BY id DESC FOR UPDATE`,
+          [pedido.id, pedido.empresa_id]
+        );
+        const pendentes = rpag.recordset.filter(p => p.status === 'PENDENTE');
+        if (rpag.recordset.length && !pendentes.length) return;
 
         const itens = await query(
           'SELECT produto_id, quantidade FROM pedidos_itens WHERE pedido_id = $1 AND empresa_id = $2',

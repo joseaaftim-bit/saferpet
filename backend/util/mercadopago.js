@@ -32,7 +32,7 @@ async function chamarMP(caminho, accessToken, opcoes = {}) {
  * Cria a preferência de checkout. `externalReference` identifica APENAS o
  * registro de pagamento; valor e produto são conferidos no servidor depois.
  */
-async function criarPreferencia(accessToken, { titulo, valorCentavos, externalReference, urlRetorno, urlWebhook, emailComprador }) {
+async function criarPreferencia(accessToken, { titulo, valorCentavos, externalReference, urlRetorno, urlWebhook, emailComprador, expiraEmMinutos }) {
   const corpo = {
     items: [{
       title: String(titulo).slice(0, 250),
@@ -47,6 +47,13 @@ async function criarPreferencia(accessToken, { titulo, valorCentavos, externalRe
     statement_descriptor: 'SAFERPET',
   };
   if (emailComprador) corpo.payer = { email: emailComprador };
+
+  // O link do checkout morre junto com a reserva de estoque: sem isso, o
+  // cliente pode pagar horas depois de o pedido ter sido devolvido.
+  if (expiraEmMinutos) {
+    corpo.expires = true;
+    corpo.expiration_date_to = new Date(Date.now() + expiraEmMinutos * 60 * 1000).toISOString();
+  }
 
   return chamarMP('/checkout/preferences', accessToken, { method: 'POST', body: corpo });
 }

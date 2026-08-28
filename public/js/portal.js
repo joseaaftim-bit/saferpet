@@ -392,7 +392,30 @@
         rotuloLevaTraz.style.display = r.leva_traz_disponivel ? 'flex' : 'none';
         avisoEndereco.style.display = (r.leva_traz_disponivel && !temEndereco) ? 'block' : 'none';
         if (!r.horarios.length) {
-          pilulas.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem">Nenhum horário livre neste dia. Tente outro.</span>';
+          // Dia cheio: em vez de só dizer não, oferece a fila de encaixe.
+          pilulas.innerHTML = `
+            <div style="display: flex; flex-direction: column; gap: 8px; width: 100%">
+              <span style="color: var(--text-muted); font-size: 0.85rem">Este dia está cheio.</span>
+              <button type="button" class="btn-fantasma" id="botao-fila" style="align-self: flex-start">
+                Avisem-me se abrir vaga
+              </button>
+            </div>`;
+          const botaoFila = pilulas.querySelector('#botao-fila');
+          botaoFila.addEventListener('click', async () => {
+            botaoFila.disabled = true;
+            try {
+              await api('/fila', { method: 'POST', body: {
+                servico_id: parseInt(form.querySelector('[name="servico_id"]').value, 10),
+                pet_id: form.querySelector('[name="pet_id"]') ? parseInt(form.querySelector('[name="pet_id"]').value, 10) : null,
+                data,
+              }});
+              fecharModal();
+              toast('Pronto! O petshop avisa você se abrir vaga neste dia.');
+            } catch (err) {
+              toast(err.message, true);
+              botaoFila.disabled = false;
+            }
+          });
           return;
         }
         pilulas.innerHTML = r.horarios.map(h => `<button type="button" class="pilula-horario" data-hora="${h}">${h}</button>`).join('');
@@ -701,14 +724,18 @@
       let tentativas = 0;
       const antes = (dados && dados.pacotes || []).reduce((s, p) => s + p.saldo, 0);
       const pedidosAntes = (dados && dados.pedidos || []).length;
+      const pagosAntes = (dados && dados.pedidos || [])
+        .filter(p => p.status !== 'AGUARDANDO_PAGAMENTO').length;
       const timer = setInterval(async () => {
         tentativas += 1;
         try {
           await carregar();
           const depois = (dados.pacotes || []).reduce((s, p) => s + p.saldo, 0);
           const pedidosDepois = (dados.pedidos || []).length;
-          const pago = (dados.pedidos || []).some(p => p.status !== 'AGUARDANDO_PAGAMENTO');
-          if (depois > antes || pedidosDepois > pedidosAntes || pago) {
+          // Só confirma se ALGO mudou desde antes de voltar do checkout —
+          // um pedido antigo já pago não pode virar "pagamento confirmado".
+          const pagosAgora = (dados.pedidos || []).filter(p => p.status !== 'AGUARDANDO_PAGAMENTO').length;
+          if (depois > antes || pedidosDepois > pedidosAntes || pagosAgora > pagosAntes) {
             clearInterval(timer);
             toast('Pagamento confirmado!');
             history.replaceState(null, '', window.location.pathname);

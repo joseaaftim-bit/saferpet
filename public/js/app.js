@@ -676,12 +676,10 @@
   // ═══ Ficha do cliente ════════════════════════════════════════════
 
   async function verFicha(clienteId) {
-    const [c, vacinas] = await Promise.all([
+    const [c, vacinasCliente] = await Promise.all([
       api(`/clientes/${clienteId}`),
-      api('/extras/vacinas').catch(() => []),
+      api(`/extras/vacinas?cliente_id=${clienteId}`).catch(() => []),
     ]);
-    const petsDoCliente = new Set(c.pets.map(p => p.id));
-    const vacinasCliente = vacinas.filter(v => petsDoCliente.has(v.pet_id));
     const ativo = pacoteEmConsumo(c.pacotes);
     const proximos = c.pacotes.filter(p => p.status === 'ATIVO' && (!ativo || p.id !== ativo.id));
     const anteriores = c.pacotes.filter(p => p.status !== 'ATIVO');
@@ -1557,6 +1555,9 @@
         nome: f.get('nome'), descricao: f.get('descricao'),
         preco_centavos: centavos, estoque: parseInt(f.get('estoque'), 10) || 0,
         controla_estoque: f.get('controla_estoque') === 'on',
+        // O servidor aplica a diferença, para não desfazer venda feita
+        // enquanto esta tela estava aberta.
+        estoque_visto: p ? p.estoque : undefined,
       };
       try {
         if (p) {
@@ -1924,13 +1925,21 @@
         toast('Valor inválido.', true); return;
       }
       try {
+        // Lê o nome/WhatsApp do outro formulário na tela: se o admin
+        // mexeu neles e salvou a loja primeiro, nada se perde.
+        const formEmpresa = document.getElementById('form-empresa');
         await api('/empresa', { method: 'PUT', body: {
-          nome: emp.nome, whatsapp: emp.whatsapp,
+          nome: formEmpresa.querySelector('[name="nome"]').value,
+          whatsapp: formEmpresa.querySelector('[name="whatsapp"]').value,
+          aceita_online: formEmpresa.querySelector('[name="aceita_online"]').checked,
           vende_produtos: f.get('vende_produtos') === 'on',
           taxa_entrega_centavos: taxa,
           entrega_gratis_acima_centavos: gratis,
         }});
-        toast('Loja atualizada.'); verConfig();
+        toast('Loja atualizada.');
+        await carregarSessao();
+        document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+        verConfig();
       } catch (err) { toast(err.message, true); }
     });
 

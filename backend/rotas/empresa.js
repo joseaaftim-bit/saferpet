@@ -121,7 +121,7 @@ router.put('/pagamento', somenteAdmin, async (req, res, next) => {
 router.get('/pagamentos', somenteAdmin, async (req, res, next) => {
   try {
     const r = await executeQuery(
-      `SELECT p.id, p.tipo, p.valor_centavos, p.status, p.criado_em, p.aprovado_em,
+      `SELECT p.id, p.tipo, p.pedido_id, p.valor_centavos, p.status, p.criado_em, p.aprovado_em,
               c.id AS cliente_id, c.nome AS cliente_nome, m.nome AS pacote_nome
          FROM pagamentos p
          JOIN clientes c ON c.id = p.cliente_id

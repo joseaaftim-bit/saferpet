@@ -94,9 +94,14 @@ router.get('/vacinas', async (req, res, next) => {
   try {
     const empresaId = req.usuario.empresa_id;
     const petId = req.query.pet_id ? parseInt(req.query.pet_id, 10) : null;
+    const clienteId = req.query.cliente_id ? parseInt(req.query.cliente_id, 10) : null;
     const params = [empresaId];
     let filtro = '';
-    if (Number.isInteger(petId)) { params.push(petId); filtro = 'AND v.pet_id = $2'; }
+    if (Number.isInteger(petId)) {
+      params.push(petId); filtro = 'AND v.pet_id = $2';
+    } else if (Number.isInteger(clienteId)) {
+      params.push(clienteId); filtro = 'AND c.id = $2';
+    }
 
     const r = await executeQuery(
       `SELECT v.id, v.pet_id, v.nome, v.aplicada_em, v.reforco_em, v.lote, v.observacao,
@@ -129,10 +134,14 @@ router.get('/vacinas/reforcos', async (req, res, next) => {
          JOIN pets p ON p.id = v.pet_id
          JOIN clientes c ON c.id = p.cliente_id
         WHERE v.empresa_id = $1 AND v.reforco_em IS NOT NULL
-          AND v.reforco_em <= $2::date AND p.ativo AND c.ativo
+          AND v.reforco_em <= $2::date AND v.reforco_em >= $3::date
+          AND p.ativo AND c.ativo
         ORDER BY v.reforco_em
         LIMIT 100`,
-      [req.usuario.empresa_id, limite.toISOString().slice(0, 10)]
+      // Janela: de 60 dias atrás (vencido há pouco, ainda vale ligar) até
+      // o limite pedido. Sem o piso, a lista entope com vencidos antigos.
+      [req.usuario.empresa_id, limite.toISOString().slice(0, 10),
+       new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)]
     );
     res.json(r.recordset);
   } catch (err) {

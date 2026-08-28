@@ -33,10 +33,11 @@ function iniciarJobs() {
   jobs.push(
     cron.schedule('*/10 * * * *', () => {
       const pagamentos = require('../rotas/pagamentos');
+      // Reconciliar ANTES de expirar: um pagamento que chegou sem webhook
+      // não pode ter o pedido cancelado embaixo dele.
       pagamentos.reconciliarPendentes()
-        .catch(err => console.error('[jobs] Falha ao reconciliar pagamentos:', err.message));
-      pagamentos.expirarPedidosAbandonados()
-        .catch(err => console.error('[jobs] Falha ao expirar pedidos:', err.message));
+        .then(() => pagamentos.expirarPedidosAbandonados())
+        .catch(err => console.error('[jobs] Falha no ciclo de pagamentos:', err.message));
     }, { timezone: 'America/Sao_Paulo' })
   );
 

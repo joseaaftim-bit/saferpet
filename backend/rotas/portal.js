@@ -208,11 +208,13 @@ router.get('/:token/extras', async (req, res, next) => {
     if (!responderToken(res, cliente)) return;
 
     const [fotos, vacinas, aAvaliar] = await Promise.all([
+      // 6 fotos: cada uma é base64 no corpo da resposta, e o app é aberto
+      // no celular em 4G.
       executeQuery(
         `SELECT f.id, f.conteudo, f.legenda, f.criado_em, p.nome AS pet_nome
            FROM fotos f LEFT JOIN pets p ON p.id = f.pet_id
           WHERE f.cliente_id = $1 AND f.empresa_id = $2
-          ORDER BY f.criado_em DESC LIMIT 12`,
+          ORDER BY f.criado_em DESC LIMIT 6`,
         [cliente.id, cliente.empresa_id]),
       executeQuery(
         `SELECT v.id, v.nome, v.aplicada_em, v.reforco_em, p.nome AS pet_nome
@@ -268,9 +270,13 @@ router.post('/:token/avaliar', limiteEscrita, async (req, res, next) => {
         [cliente.empresa_id, cliente.id, agendamentoId, nota,
          String((req.body || {}).comentario || '').trim().slice(0, 500) || null]
       );
-    } catch (_err) {
-      // Índice único: já avaliado.
-      return res.status(409).json({ erro: 'Você já avaliou este atendimento.' });
+    } catch (err) {
+      // Índice único (23505) = já avaliado. Outro erro é falha de verdade
+      // e não pode ser reportado ao cliente como "já avaliou".
+      if (err && (err.code === '23505' || /duplic|unique/i.test(err.message || ''))) {
+        return res.status(409).json({ erro: 'Você já avaliou este atendimento.' });
+      }
+      throw err;
     }
     res.status(201).json({ ok: true });
   } catch (err) {

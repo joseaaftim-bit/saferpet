@@ -75,16 +75,39 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
       return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     }
     const ativo = typeof (req.body || {}).ativo === 'boolean' ? req.body.ativo : null;
-    const r = await executeQuery(
-      `UPDATE produtos SET nome = $1, descricao = $2, preco_centavos = $3,
-              estoque = $4, controla_estoque = $5, ativo = COALESCE($6, ativo)
-        WHERE id = $7 AND empresa_id = $8
-        RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo`,
-      [dados.nome, dados.descricao, dados.preco, dados.estoque, dados.controlaEstoque,
-       ativo, produtoId, req.usuario.empresa_id]
-    );
-    if (!r.recordset.length) return res.status(404).json({ erro: 'Produto não encontrado.' });
-    res.json(r.recordset[0]);
+    const empresaId = req.usuario.empresa_id;
+
+    // O formulário manda o estoque que o admin VIU ao abrir a tela. Se
+    // alguém comprou nesse meio-tempo, gravar o número cru desfaz a
+    // reserva. Aplicamos a DIFERENÇA sobre o valor atual, em transação.
+    const atualizado = await comTransacao(async (query) => {
+      const r = await query(
+        `SELECT id, estoque FROM produtos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+        [produtoId, empresaId]
+      );
+      const atual = r.recordset[0];
+      if (!atual) return null;
+
+      const visto = parseInt((req.body || {}).estoque_visto, 10);
+      let novoEstoque = dados.estoque;
+      if (Number.isInteger(visto) && visto !== atual.estoque) {
+        const diferenca = dados.estoque - visto;
+        novoEstoque = Math.max(0, atual.estoque + diferenca);
+      }
+
+      const up = await query(
+        `UPDATE produtos SET nome = $1, descricao = $2, preco_centavos = $3,
+                estoque = $4, controla_estoque = $5, ativo = COALESCE($6, ativo)
+          WHERE id = $7 AND empresa_id = $8
+          RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo`,
+        [dados.nome, dados.descricao, dados.preco, novoEstoque, dados.controlaEstoque,
+         ativo, produtoId, empresaId]
+      );
+      return up.recordset[0];
+    });
+
+    if (!atualizado) return res.status(404).json({ erro: 'Produto não encontrado.' });
+    res.json(atualizado);
   } catch (err) {
     next(err);
   }
@@ -92,7 +115,16 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
 
 // ─── Pedidos (painel do petshop) ───────────────────────────────────
 
-const STATUS_PEDIDO = ['AGUARDANDO_PAGAMENTO', 'PAGO', 'SEPARADO', 'EM_ROTA', 'ENTREGUE', 'CANCELADO'];
+// Transições permitidas. Voltar para AGUARDANDO_PAGAMENTO entregaria um
+// pedido pago ao job de expiração, que devolveria o estoque de graça.
+const TRANSICOES = {
+  AGUARDANDO_PAGAMENTO: ['CANCELADO'],
+  PAGO: ['SEPARADO', 'EM_ROTA', 'ENTREGUE', 'CANCELADO'],
+  SEPARADO: ['EM_ROTA', 'ENTREGUE', 'CANCELADO'],
+  EM_ROTA: ['ENTREGUE', 'CANCELADO'],
+  ENTREGUE: [],
+  CANCELADO: [],
+};
 
 router.get('/pedidos', async (req, res, next) => {
   try {
@@ -109,10 +141,15 @@ router.get('/pedidos', async (req, res, next) => {
           WHERE p.empresa_id = $1
           ORDER BY p.criado_em DESC LIMIT 100`,
         [empresaId]),
+      // Só os itens dos pedidos que a tela mostra — não o histórico todo.
       executeQuery(
         `SELECT i.pedido_id, i.produto_nome, i.preco_centavos, i.quantidade
            FROM pedidos_itens i
-          WHERE i.empresa_id = $1 ORDER BY i.id`,
+           JOIN pedidos p ON p.id = i.pedido_id
+          WHERE i.empresa_id = $1
+            AND p.id IN (SELECT id FROM pedidos WHERE empresa_id = $1
+                          ORDER BY criado_em DESC LIMIT 100)
+          ORDER BY i.id`,
         [empresaId]),
     ]);
 
@@ -133,7 +170,7 @@ router.put('/pedidos/:id', async (req, res, next) => {
   try {
     const pedidoId = parseInt(req.params.id, 10);
     const status = String((req.body || {}).status || '');
-    if (!Number.isInteger(pedidoId) || !STATUS_PEDIDO.includes(status)) {
+    if (!Number.isInteger(pedidoId) || !Object.keys(TRANSICOES).includes(status)) {
       return res.status(400).json({ erro: 'Situação inválida.' });
     }
     const empresaId = req.usuario.empresa_id;
@@ -146,10 +183,12 @@ router.put('/pedidos/:id', async (req, res, next) => {
       );
       const pedido = rp.recordset[0];
       if (!pedido) throw erroNegocio('Pedido não encontrado.', 404);
-      if (pedido.status === 'ENTREGUE' && status !== 'ENTREGUE') {
-        throw erroNegocio('Pedido já entregue.', 409);
+      if (!(TRANSICOES[pedido.status] || []).includes(status)) {
+        throw erroNegocio(
+          `Não dá para mudar um pedido ${String(pedido.status).toLowerCase().replace(/_/g, ' ')} para ${String(status).toLowerCase().replace(/_/g, ' ')}.`,
+          409
+        );
       }
-      if (pedido.status === 'CANCELADO') throw erroNegocio('Pedido já cancelado.', 409);
 
       if (status === 'CANCELADO') {
         const itens = await query(
@@ -172,6 +211,13 @@ router.put('/pedidos/:id', async (req, res, next) => {
             [pedido.agendamento_id, empresaId]
           );
         }
+        // Fecha o pagamento pendente: senão a reconciliação vai buscar no
+        // Mercado Pago um pedido que já morreu.
+        await query(
+          `UPDATE pagamentos SET status = 'CANCELADO'
+            WHERE pedido_id = $1 AND empresa_id = $2 AND status = 'PENDENTE'`,
+          [pedidoId, empresaId]
+        );
       }
 
       if (status === 'ENTREGUE' && pedido.agendamento_id) {
