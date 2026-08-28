@@ -130,7 +130,9 @@
     fundo.innerHTML = `<div class="modal">${html}</div>`;
     fundo.addEventListener('click', (ev) => { if (ev.target === fundo) fecharModal(); });
     areaModal.appendChild(fundo);
-    return fundo.querySelector('.modal');
+    const modal = fundo.querySelector('.modal');
+    if (typeof pintarImagens === 'function') pintarImagens(modal);
+    return modal;
   }
 
   function fecharModal() {
@@ -1478,8 +1480,10 @@
       <div class="rotulo-secao" style="margin-top: 8px">Produtos</div>
       ${produtos.length ? `<div class="lista">${produtos.map(p => `
         <div class="linha" style="${p.ativo ? '' : 'opacity: 0.55'}">
-          ${p.foto
-            ? `<img src="${esc(p.foto)}" alt="" style="width: 48px; height: 48px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">`
+          ${p.tem_foto
+            ? `<img alt="" data-img="/api/loja/produtos/${p.id}/foto?v=${esc(p.foto_versao || '')}"
+                 decoding="async" width="48" height="48"
+                 style="width: 48px; height: 48px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0; background: var(--bg-inset)">`
             : '<div class="avatar" style="border-radius: 10px">' + ICONES.pata + '</div>'}
           <div style="flex: 1">
             <div class="linha-titulo">${esc(p.nome)}</div>
@@ -1489,6 +1493,8 @@
           ${ehAdmin() ? `<button class="btn-fantasma btn-mini" data-editar-produto="${p.id}" type="button">Editar</button>` : ''}
         </div>`).join('')}</div>`
       : `<div class="vazio">Nenhum produto cadastrado.${ehAdmin() ? '<br>Cadastre a ração e os petiscos que o cliente pode pedir pelo aplicativo.' : ''}</div>`}`;
+
+    pintarImagens(conteudo);
 
     const bNovo = document.getElementById('botao-novo-produto');
     if (bNovo) bNovo.addEventListener('click', () => modalProduto(null));
@@ -1546,13 +1552,13 @@
         <div class="campo"><label>Descrição</label><textarea name="descricao" rows="2">${p ? esc(p.descricao || '') : ''}</textarea></div>
         <div class="campo"><label>Foto do produto</label>
           <div style="display: flex; align-items: center; gap: 12px">
-            <img id="previa-foto" alt="" src="${p && p.foto ? esc(p.foto) : ''}"
-                 style="width: 72px; height: 72px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); ${p && p.foto ? '' : 'display: none'}">
+            <img id="previa-foto" alt="" ${p && p.tem_foto ? `data-img="/api/loja/produtos/${p.id}/foto?v=${esc(p.foto_versao || '')}"` : ''}
+                 style="width: 72px; height: 72px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); ${p && p.tem_foto ? '' : 'display: none'}">
             <label class="btn-fantasma btn-mini" style="cursor: pointer">
-              ${p && p.foto ? 'Trocar foto' : 'Escolher foto'}
+              ${p && p.tem_foto ? 'Trocar foto' : 'Escolher foto'}
               <input type="file" id="campo-foto-produto" accept="image/*" style="display: none">
             </label>
-            ${p && p.foto ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-foto">Remover</button>' : ''}
+            ${p && p.tem_foto ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-foto">Remover</button>' : ''}
           </div>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
@@ -1738,12 +1744,44 @@
     document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
     const caixa = document.querySelector('.marca-icone');
     if (!caixa) return;
-    if (sessao.empresa.logo) {
-      caixa.innerHTML = `<img src="${esc(sessao.empresa.logo)}" alt=""
+    if (sessao.empresa.tem_logo) {
+      caixa.innerHTML = `<img alt="" data-img="/api/empresa/logo?v=${esc(sessao.empresa.logo_versao || '')}"
         style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`;
       caixa.style.padding = '2px';
       caixa.style.background = 'var(--bg-panel)';
+      pintarImagens(caixa);
+    } else {
+      // Removeu a logo: volta o ícone, senão a imagem antiga fica na tela.
+      caixa.innerHTML = ICONES.pata;
+      caixa.style.padding = '';
+      caixa.style.background = '';
     }
+  }
+
+  // As rotas de imagem do painel exigem autenticação, e a tag <img> não
+  // manda cabeçalho. Buscamos por fetch e apontamos para um blob local —
+  // cada imagem viaja uma vez por sessão, sob demanda.
+  const cacheImagens = new Map();
+
+  async function pintarImagem(el, caminho) {
+    if (!el) return;
+    if (cacheImagens.has(caminho)) { el.src = cacheImagens.get(caminho); return; }
+    try {
+      const resp = await fetch(caminho, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('saferpet_token') || ''}` },
+      });
+      if (!resp.ok) return;
+      const url = URL.createObjectURL(await resp.blob());
+      cacheImagens.set(caminho, url);
+      el.src = url;
+    } catch (_e) { /* imagem é enfeite: falhar não quebra a tela */ }
+  }
+
+  /** Pinta todas as imagens marcadas com data-img no container dado. */
+  function pintarImagens(raiz) {
+    (raiz || document).querySelectorAll('[data-img]').forEach(el => {
+      pintarImagem(el, el.dataset.img);
+    });
   }
 
   function numeroWhatsApp(telefone) {
@@ -1788,8 +1826,9 @@
   // ═══ Assinatura (o petshop paga a SaferSoftware) ═════════════════
 
   const SITUACAO_ASSINATURA = {
-    APROVADO: 'ok', PENDENTE: '', DIVERGENTE: 'alerta',
-    PENDENTE_MANUAL: 'alerta', ERRO: 'alerta',
+    APROVADO: 'ok', PENDENTE: '', EXPIRADA: '', DIVERGENTE: 'alerta',
+    PENDENTE_MANUAL: 'alerta', ERRO: 'alerta', ESTORNADO: 'alerta',
+    DUPLICADO: 'alerta',
   };
 
   async function verAssinatura() {
@@ -1936,13 +1975,13 @@
                 <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
               <div class="campo"><label>Logo do petshop</label>
                 <div style="display: flex; align-items: center; gap: 12px">
-                  <img id="previa-logo" alt="" src="${emp.logo ? esc(emp.logo) : ''}"
-                       style="width: 64px; height: 64px; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); padding: 4px; ${emp.logo ? '' : 'display: none'}">
+                  <img id="previa-logo" alt="" ${emp.tem_logo ? `data-img="/api/empresa/logo?v=${esc(emp.logo_versao || '')}"` : ''}
+                       style="width: 64px; height: 64px; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-inset); padding: 4px; ${emp.tem_logo ? '' : 'display: none'}">
                   <label class="btn-fantasma btn-mini" style="cursor: pointer">
-                    ${emp.logo ? 'Trocar logo' : 'Escolher logo'}
+                    ${emp.tem_logo ? 'Trocar logo' : 'Escolher logo'}
                     <input type="file" id="campo-logo" accept="image/*" style="display: none">
                   </label>
-                  ${emp.logo ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-logo">Remover</button>' : ''}
+                  ${emp.tem_logo ? '<button type="button" class="btn-fantasma btn-mini perigo" id="botao-tirar-logo">Remover</button>' : ''}
                 </div>
                 <div class="linha-sub" style="margin-top: 4px">Aparece no aplicativo do cliente e aqui no topo.</div>
               </div>

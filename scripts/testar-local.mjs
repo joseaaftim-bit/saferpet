@@ -1037,21 +1037,47 @@ try {
     const comFoto = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
       nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: pixel,
     }});
-    verificar('produto aceita foto', comFoto.status === 200 && comFoto.dados.foto === pixel);
+    verificar('produto aceita foto e devolve só a marca (sem base64)',
+      comFoto.status === 200 && comFoto.dados.tem_foto === true &&
+      !!comFoto.dados.foto_versao && comFoto.dados.foto === undefined,
+      JSON.stringify(comFoto.dados));
+
+    // A imagem vem por rota própria, binária e cacheável.
+    const rotaFoto = await fetch(`${base}/api/loja/produtos/${produto.dados.id}/foto`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    const etag = rotaFoto.headers.get('etag');
+    verificar('rota serve a foto como imagem binária com ETag',
+      rotaFoto.status === 200 && (rotaFoto.headers.get('content-type') || '').startsWith('image/') && !!etag);
+
+    const rotaCache = await fetch(`${base}/api/loja/produtos/${produto.dados.id}/foto`, {
+      headers: { Authorization: `Bearer ${tokenA}`, 'If-None-Match': etag },
+    });
+    verificar('navegador com a foto em cache recebe 304', rotaCache.status === 304);
 
     const semMexer = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
       nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3,
     }});
-    verificar('salvar sem mandar foto preserva a foto atual', semMexer.dados.foto === pixel);
+    verificar('salvar sem mandar foto preserva a foto atual', semMexer.dados.tem_foto === true);
 
     const vitrine = await chamar('GET', `/api/portal/${cli.dados.token_portal}`);
     const prod = vitrine.dados.produtos.find(x => x.id === produto.dados.id);
-    verificar('cliente vê a foto do produto na vitrine', prod && prod.foto === pixel);
+    verificar('vitrine do cliente NÃO carrega base64 (só a marca)',
+      prod && prod.tem_foto === true && prod.foto === undefined &&
+      !JSON.stringify(vitrine.dados).includes('base64'),
+      JSON.stringify(prod));
+
+    const fotoCliente = await fetch(`${base}/api/portal/${cli.dados.token_portal}/produtos/${produto.dados.id}/foto`);
+    verificar('cliente busca a foto pela rota do portal',
+      fotoCliente.status === 200 && (fotoCliente.headers.get('content-type') || '').startsWith('image/'));
+
+    const fotoAlheia = await fetch(`${base}/api/portal/${cliB.dados.token_portal}/produtos/${produto.dados.id}/foto`);
+    verificar('cliente de outro petshop não busca a foto', fotoAlheia.status === 404 || fotoAlheia.status === 503);
 
     const tirouFoto = await chamar('PUT', `/api/loja/produtos/${produto.dados.id}`, { token: tokenA, corpo: {
       nome: 'Ração Premium 10kg', preco_centavos: 25000, estoque: 3, foto: null,
     }});
-    verificar('mandar foto nula remove a foto', tirouFoto.dados.foto === null);
+    verificar('mandar foto nula remove a foto', tirouFoto.dados.tem_foto === false);
 
     const logoRuim = await chamar('PUT', '/api/empresa', { token: tokenA, corpo: {
       nome: 'Salva Patas', logo: 'nao-e-imagem',
@@ -1062,13 +1088,25 @@ try {
     const empComLogo = await chamar('GET', '/api/empresa', { token: tokenA });
     const portalComLogo = await chamar('GET', `/api/portal/${cli.dados.token_portal}`);
     const meComLogo = await chamar('GET', '/api/auth/me', { token: tokenA });
-    verificar('logo salva aparece no painel, no /me e no app do cliente',
-      empComLogo.dados.logo === pixel && meComLogo.dados.empresa.logo === pixel &&
-      portalComLogo.dados.petshop.logo === pixel);
+    verificar('logo aparece como marca no painel, no /me e no app do cliente',
+      empComLogo.dados.tem_logo === true && meComLogo.dados.empresa.tem_logo === true &&
+      portalComLogo.dados.petshop.tem_logo === true,
+      JSON.stringify({ emp: empComLogo.dados.tem_logo, me: meComLogo.dados.empresa.tem_logo,
+                       portal: portalComLogo.dados.petshop.tem_logo }));
+
+    verificar('a logo NÃO viaja em toda requisição autenticada',
+      !JSON.stringify(meComLogo.dados).includes('base64') &&
+      !JSON.stringify(portalComLogo.dados.petshop).includes('base64'));
+
+    const rotaLogo = await fetch(`${base}/api/empresa/logo`, { headers: { Authorization: `Bearer ${tokenA}` } });
+    const rotaLogoCliente = await fetch(`${base}/api/portal/${cli.dados.token_portal}/logo`);
+    verificar('logo servida por rota própria nos dois apps',
+      rotaLogo.status === 200 && rotaLogoCliente.status === 200 &&
+      (rotaLogoCliente.headers.get('content-type') || '').startsWith('image/'));
 
     await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas' } });
     const aindaTemLogo = await chamar('GET', '/api/empresa', { token: tokenA });
-    verificar('salvar sem mandar logo preserva a logo', aindaTemLogo.dados.logo === pixel);
+    verificar('salvar sem mandar logo preserva a logo', aindaTemLogo.dados.tem_logo === true);
   }
 
   console.log('\n— Assinatura do petshop (cobrança da SaferSoftware) —');
@@ -1096,6 +1134,16 @@ try {
     verificar('tabela de preços do servidor tem mensal e anual',
       planos.planoDe('MENSAL').dias === 30 && planos.planoDe('ANUAL').dias === 365 &&
       planos.planoDe('inexistente') === null);
+
+    // Reconciliação não pode travar na cabeça da fila com PENDENTE morto.
+    const rotaAssinatura = require(path.join(raiz, 'backend', 'rotas', 'assinatura.js'));
+    await pool.query(`INSERT INTO assinaturas (empresa_id, plano, periodo, valor_centavos, status, mp_preference_id, criado_em)
+      VALUES (1, 'PRO', 'MENSAL', 14900, 'PENDENTE', 'pref-morta', NOW() - INTERVAL '48 hours')`);
+    await rotaAssinatura.reconciliarAssinaturas(10);
+    const mortas = await pool.query(`SELECT status FROM assinaturas WHERE mp_preference_id = 'pref-morta'`);
+    verificar('cobrança sem pagamento em 24h expira e libera a fila',
+      mortas.rows[0] && mortas.rows[0].status === 'EXPIRADA',
+      JSON.stringify(mortas.rows[0]));
   }
 
   console.log('\n— Hub, saúde e limites —');

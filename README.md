@@ -156,6 +156,20 @@ node scripts/testar-api.mjs https://pet.safersoftware.com.br
 - Cobrança automática da mensalidade (hoje o petshop renova clicando).
 - Plugar no Safer Hub (rota `/api/hub/metrics` já pronta, falta o card no Hub).
 
+## Imagens (foto de produto e logo)
+
+Ficam no banco como base64, mas **nunca viajam nas listagens** — a resposta
+carrega só `tem_foto`/`tem_logo` e uma marca de versão, e a imagem vem por
+rota própria, binária, com ETag e cache de um dia:
+
+- cliente: `GET /api/portal/:token/logo` e `/api/portal/:token/produtos/:id/foto`
+- painel: `GET /api/empresa/logo` e `/api/loja/produtos/:id/foto`
+
+Servir a base64 na listagem fazia a tela inicial do app do cliente pesar
+**12,6 MB** com 50 produtos; hoje pesa 10 KB. No painel as rotas exigem
+token, e a tag `<img>` não manda cabeçalho — por isso `pintarImagens()` em
+`app.js` busca por fetch e aponta para um blob local.
+
 ## Armadilhas conhecidas (leia antes de mexer)
 
 - **`FOR UPDATE` em join externo precisa de `OF`** nos lados internos. O

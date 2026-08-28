@@ -6,6 +6,7 @@ const { executeQuery } = require('../database');
 const { somenteAdmin } = require('../middlewares/autenticacao');
 const { cifrar, decifrar, mascarar } = require('../util/cripto');
 const { APP_URL } = require('../config/segredos');
+const { versaoDe, responderImagem } = require('../util/imagens');
 
 const router = express.Router();
 
@@ -20,7 +21,8 @@ router.get('/', somenteAdmin, async (req, res, next) => {
         [req.usuario.empresa_id]),
       executeQuery(
         `SELECT aceita_online, mp_access_token, mp_webhook_secret,
-                vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos, logo
+                vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos,
+                (logo IS NOT NULL) AS tem_logo, logo_versao
            FROM empresas WHERE id = $1`,
         [req.usuario.empresa_id]),
     ]);
@@ -32,7 +34,8 @@ router.get('/', somenteAdmin, async (req, res, next) => {
       plano: req.empresa.plano,
       acesso_ate: req.empresa.acesso_ate,
       aceita_online: !!c.aceita_online,
-      logo: c.logo || null,
+      tem_logo: !!c.tem_logo,
+      logo_versao: c.logo_versao,
       vende_produtos: !!c.vende_produtos,
       taxa_entrega_centavos: c.taxa_entrega_centavos || 0,
       entrega_gratis_acima_centavos: c.entrega_gratis_acima_centavos,
@@ -88,17 +91,29 @@ router.put('/', somenteAdmin, async (req, res, next) => {
               taxa_entrega_centavos = COALESCE($5, taxa_entrega_centavos),
               entrega_gratis_acima_centavos = CASE WHEN $6::boolean THEN $7::int
                                                    ELSE entrega_gratis_acima_centavos END,
-              logo = CASE WHEN $8::boolean THEN $9 ELSE logo END
-        WHERE id = $10`,
+              logo = CASE WHEN $8::boolean THEN $9 ELSE logo END,
+              logo_versao = CASE WHEN $8::boolean THEN $10 ELSE logo_versao END
+        WHERE id = $11`,
       [String(nome).trim(), String(whatsapp || '').trim() || null,
        typeof aceita_online === 'boolean' ? aceita_online : null,
        typeof vende_produtos === 'boolean' ? vende_produtos : null,
        taxa,
        gratisAcima !== undefined, gratisAcima === undefined ? null : gratisAcima,
        logoValidada !== undefined, logoValidada === undefined ? null : logoValidada,
+       versaoDe(logoValidada),
        req.usuario.empresa_id]
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/logo', async (req, res, next) => {
+  try {
+    const r = await executeQuery('SELECT logo FROM empresas WHERE id = $1',
+      [req.usuario.empresa_id]);
+    return responderImagem(res, r.recordset[0] && r.recordset[0].logo, req);
   } catch (err) {
     next(err);
   }

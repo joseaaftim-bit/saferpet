@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const { executeQuery, comTransacao } = require('../database');
 const { hojeSaoPaulo } = require('../util/datas');
 const { calcularHorariosLivres, criarAgendamento } = require('../util/agendamentos');
+const { responderImagem } = require('../util/imagens');
 
 const router = express.Router();
 
@@ -39,7 +40,8 @@ async function resolverToken(token) {
     `SELECT c.id, c.nome, c.telefone, c.email, c.endereco, c.empresa_id,
             e.nome AS petshop_nome, e.whatsapp AS petshop_whatsapp,
             e.acesso_ate, e.ativo AS empresa_ativa, e.aceita_online,
-            e.mp_access_token, e.mp_webhook_secret, e.logo
+            e.mp_access_token, e.mp_webhook_secret,
+            (e.logo IS NOT NULL) AS tem_logo, e.logo_versao
        FROM clientes c
        JOIN empresas e ON e.id = c.empresa_id
       WHERE c.token_portal = $1 AND c.ativo`,
@@ -112,9 +114,15 @@ router.get('/:token', async (req, res, next) => {
         `SELECT id, nome, valor_centavos, validade_meses FROM pacotes_modelo
           WHERE empresa_id = $1 AND ativo AND valor_centavos > 0 ORDER BY valor_centavos`,
         [cliente.empresa_id]),
+      // Sem a base64 aqui: a imagem vai por rota própria, cacheada. Antes
+      // esta única resposta chegava a megabytes no celular do cliente.
       executeQuery(
-        `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, foto
-           FROM produtos WHERE empresa_id = $1 AND ativo ORDER BY nome`,
+        `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque,
+                (foto IS NOT NULL) AS tem_foto, foto_versao
+           FROM produtos
+          WHERE empresa_id = $1 AND ativo
+            AND (NOT controla_estoque OR estoque > 0)
+          ORDER BY nome LIMIT 200`,
         [cliente.empresa_id]),
       executeQuery(
         `SELECT p.id, p.valor_centavos, p.status, p.entrega, p.criado_em,
@@ -172,7 +180,8 @@ router.get('/:token', async (req, res, next) => {
       petshop: {
         nome: cliente.petshop_nome,
         whatsapp: cliente.petshop_whatsapp,
-        logo: cliente.logo || null,
+        tem_logo: !!cliente.tem_logo,
+        logo_versao: cliente.logo_versao || null,
         aceita_online: !!cliente.aceita_online,
         // Pagar exige as DUAS credenciais: sem o segredo do webhook o
         // dinheiro sai e o crédito nunca entra.
@@ -193,9 +202,44 @@ router.get('/:token', async (req, res, next) => {
       agendamentos: futuros,
       servicos: servicos.recordset,
       pacotes_a_venda: modelos.recordset.map(m => ({ ...m, itens: porModelo.get(m.id) || [] })),
-      produtos: produtos.recordset.filter(p => !p.controla_estoque || p.estoque > 0),
+      produtos: produtos.recordset.map(p => ({
+        id: p.id, nome: p.nome, descricao: p.descricao,
+        preco_centavos: p.preco_centavos, estoque: p.estoque,
+        controla_estoque: p.controla_estoque,
+        tem_foto: !!p.tem_foto, foto_versao: p.foto_versao,
+      })),
       pedidos: pedidos.recordset,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Imagens (rotas próprias, cacheadas pelo navegador) ────────────
+
+router.get('/:token/logo', async (req, res, next) => {
+  try {
+    const cliente = await resolverToken(String(req.params.token || ''));
+    if (!cliente || cliente.indisponivel) return res.status(404).end();
+    const r = await executeQuery('SELECT logo FROM empresas WHERE id = $1',
+      [cliente.empresa_id]);
+    return responderImagem(res, r.recordset[0] && r.recordset[0].logo, req);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:token/produtos/:id/foto', async (req, res, next) => {
+  try {
+    const cliente = await resolverToken(String(req.params.token || ''));
+    if (!cliente || cliente.indisponivel) return res.status(404).end();
+    const produtoId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(produtoId)) return res.status(404).end();
+    const r = await executeQuery(
+      'SELECT foto FROM produtos WHERE id = $1 AND empresa_id = $2 AND ativo',
+      [produtoId, cliente.empresa_id]
+    );
+    return responderImagem(res, r.recordset[0] && r.recordset[0].foto, req);
   } catch (err) {
     next(err);
   }

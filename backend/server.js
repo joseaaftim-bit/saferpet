@@ -4,6 +4,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, 'config', '.env') });
 
 const express = require('express');
+const compression = require('compression');
 const { getPool, executeQuery } = require('./database');
 const { migrar } = require('./migrate');
 const { validarJwt, exigirAcessoVigente } = require('./middlewares/autenticacao');
@@ -12,6 +13,8 @@ const { iniciarJobs } = require('./jobs/expiracao');
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// Comprime as respostas: o app do cliente é aberto no celular, em 4G.
+app.use(compression());
 app.use(express.json({ limit: '1mb' }));
 
 // ─── Saúde: precisa tocar o banco de verdade ───────────────────────

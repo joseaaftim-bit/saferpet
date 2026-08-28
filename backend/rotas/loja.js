@@ -10,6 +10,7 @@ const { somenteAdmin } = require('../middlewares/autenticacao');
 const { hojeSaoPaulo } = require('../util/datas');
 const { contextoDoDia } = require('../util/agendamentos');
 const { primeiroEncaixe, agoraHHMMSaoPaulo } = require('../util/agenda');
+const { versaoDe, responderImagem } = require('../util/imagens');
 
 const router = express.Router();
 
@@ -26,11 +27,26 @@ function erroNegocio(mensagem, statusHttp) {
 router.get('/produtos', async (req, res, next) => {
   try {
     const r = await executeQuery(
-      `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto
+      `SELECT id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo,
+              (foto IS NOT NULL) AS tem_foto, foto_versao
          FROM produtos WHERE empresa_id = $1 ORDER BY nome`,
       [req.usuario.empresa_id]
     );
     res.json(r.recordset);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/produtos/:id/foto', async (req, res, next) => {
+  try {
+    const produtoId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(produtoId)) return res.status(404).end();
+    const r = await executeQuery(
+      'SELECT foto FROM produtos WHERE id = $1 AND empresa_id = $2',
+      [produtoId, req.usuario.empresa_id]
+    );
+    return responderImagem(res, r.recordset[0] && r.recordset[0].foto, req);
   } catch (err) {
     next(err);
   }
@@ -75,11 +91,13 @@ router.post('/produtos', somenteAdmin, async (req, res, next) => {
     const dados = validarProduto(req.body);
     if (!dados) return res.status(400).json({ erro: 'Dados do produto inválidos.' });
     const r = await executeQuery(
-      `INSERT INTO produtos (empresa_id, nome, descricao, preco_centavos, estoque, controla_estoque, foto)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto`,
+      `INSERT INTO produtos (empresa_id, nome, descricao, preco_centavos, estoque,
+                             controla_estoque, foto, foto_versao)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo,
+                 (foto IS NOT NULL) AS tem_foto, foto_versao`,
       [req.usuario.empresa_id, dados.nome, dados.descricao, dados.preco, dados.estoque,
-       dados.controlaEstoque, dados.foto || null]
+       dados.controlaEstoque, dados.foto || null, versaoDe(dados.foto)]
     );
     res.status(201).json(r.recordset[0]);
   } catch (err) {
@@ -119,12 +137,14 @@ router.put('/produtos/:id', somenteAdmin, async (req, res, next) => {
       const up = await query(
         `UPDATE produtos SET nome = $1, descricao = $2, preco_centavos = $3,
                 estoque = $4, controla_estoque = $5, ativo = COALESCE($6, ativo),
-                foto = CASE WHEN $7::boolean THEN $8 ELSE foto END
-          WHERE id = $9 AND empresa_id = $10
-          RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo, foto`,
+                foto = CASE WHEN $7::boolean THEN $8 ELSE foto END,
+                foto_versao = CASE WHEN $7::boolean THEN $9 ELSE foto_versao END
+          WHERE id = $10 AND empresa_id = $11
+          RETURNING id, nome, descricao, preco_centavos, estoque, controla_estoque, ativo,
+                    (foto IS NOT NULL) AS tem_foto, foto_versao`,
         [dados.nome, dados.descricao, dados.preco, novoEstoque, dados.controlaEstoque,
          ativo, dados.foto !== undefined, dados.foto === undefined ? null : dados.foto,
-         produtoId, empresaId]
+         versaoDe(dados.foto), produtoId, empresaId]
       );
       return up.recordset[0];
     });

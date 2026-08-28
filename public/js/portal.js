@@ -137,9 +137,10 @@
 
     raiz.innerHTML = `
       <div style="display: flex; align-items: center; gap: 12px">
-        <div class="marca-icone" style="width: 44px; height: 44px; ${dados.petshop.logo ? 'padding: 2px; background: var(--bg-panel)' : ''}">
-          ${dados.petshop.logo
-            ? `<img src="${esc(dados.petshop.logo)}" alt="" style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`
+        <div class="marca-icone" style="width: 44px; height: 44px; ${dados.petshop.tem_logo ? 'padding: 2px; background: var(--bg-panel)' : ''}">
+          ${dados.petshop.tem_logo
+            ? `<img src="/api/portal/${encodeURIComponent(token)}/logo?v=${esc(dados.petshop.logo_versao || '')}" alt=""
+                 style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`
             : PATA}
         </div>
         <div>
@@ -546,7 +547,9 @@
       <div style="display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto">
         ${produtos.map(p => `
           <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 12px">
-            ${p.foto ? `<img src="${esc(p.foto)}" alt="" style="width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">` : ''}
+            ${p.tem_foto ? `<img src="/api/portal/${encodeURIComponent(token)}/produtos/${p.id}/foto?v=${esc(p.foto_versao || '')}"
+                 alt="" decoding="async" width="56" height="56"
+                 style="width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">` : ''}
             <div style="flex: 1; min-width: 0">
               <div style="font-size: 0.9rem; font-weight: 600">${esc(p.nome)}</div>
               <div style="font-size: 0.76rem; color: var(--text-muted)">
@@ -759,7 +762,7 @@
           raiz.prepend(aviso);
         } catch (_e) { /* segue tentando */ }
 
-        if (tentativas >= 12) {
+        if (tentativas >= 6) {
           clearInterval(timer);
           aviso.innerHTML = '<div style="font-size: 0.9rem; font-weight: 600">Ainda confirmando o pagamento</div>' +
             '<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px">' +
@@ -767,7 +770,7 @@
             'Não pague de novo; se demorar, fale com o petshop.</div>';
           history.replaceState(null, '', window.location.pathname);
         }
-      }, 3000);
+      }, 5000);
     }
   }
 })();

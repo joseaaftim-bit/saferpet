@@ -67,7 +67,7 @@ router.post('/pagar', validarJwt, somenteAdmin, async (req, res, next) => {
     const abertas = await executeQuery(
       `SELECT COUNT(*)::int AS total FROM assinaturas
         WHERE empresa_id = $1 AND status = 'PENDENTE'
-          AND criado_em > NOW() - INTERVAL '1 hour'`,
+          AND criado_em > NOW() - INTERVAL '15 minutes'`,
       [empresaId]
     );
     if (abertas.recordset[0].total >= 3) {
@@ -92,6 +92,9 @@ router.post('/pagar', validarJwt, somenteAdmin, async (req, res, next) => {
         urlRetorno: `${APP_URL}/app#/assinatura`,
         urlWebhook: `${APP_URL}/api/assinatura/webhook`,
         emailComprador: req.usuario.email || undefined,
+        // O link morre junto com a janela de tentativa: pagamento fora do
+        // prazo vira conferência manual em vez de crédito silencioso.
+        expiraEmMinutos: 60,
       });
     } catch (err) {
       console.error('[assinatura] Falha ao criar preferência:', err.corpoMP || err.message);
@@ -152,6 +155,26 @@ router.post('/webhook', async (req, res) => {
 
 async function processarAssinatura(paymentId) {
   const pgto = await consultarPagamento(MP_ACCESS_TOKEN, paymentId);
+
+  // Dinheiro que voltou (estorno, contestação, cancelamento): marca a
+  // assinatura para o dono decidir o que fazer com o acesso. Não corta
+  // sozinho — derrubar um petshop no meio do expediente por um estorno
+  // parcial seria pior que o problema.
+  if (['refunded', 'charged_back', 'cancelled'].includes(pgto.status)) {
+    const r = await executeQuery(
+      `UPDATE assinaturas SET status = 'ESTORNADO'
+        WHERE mp_payment_id = $1 AND status = 'APROVADO'
+        RETURNING id, empresa_id`,
+      [String(paymentId)]
+    );
+    if (r.recordset.length) {
+      const a = r.recordset[0];
+      console.error(`[assinatura] ATENÇÃO: pagamento ${paymentId} virou ${pgto.status} — ` +
+        `assinatura ${a.id} da empresa ${a.empresa_id} estornada. Conferir o acesso.`);
+    }
+    return;
+  }
+
   if (pgto.status !== 'approved') {
     console.log(`[assinatura] pagamento ${paymentId} está ${pgto.status} — nada a fazer.`);
     return;
@@ -177,6 +200,23 @@ async function processarAssinatura(paymentId) {
       return;
     }
     if (assinatura.status === 'APROVADO') {
+      const rja = await query(
+        'SELECT mp_payment_id FROM assinaturas WHERE id = $1', [assinaturaId]);
+      const anterior = rja.recordset[0] && rja.recordset[0].mp_payment_id;
+      if (anterior && String(anterior) !== String(paymentId)) {
+        // O petshop pagou duas vezes a MESMA cobrança. Não estende o acesso
+        // de novo, mas registra para devolvermos — nunca some em silêncio.
+        console.error(`[assinatura] ${assinaturaId} recebeu segunda cobrança ${paymentId} (já paga em ${anterior}).`);
+        await query(
+          `INSERT INTO assinaturas (empresa_id, plano, periodo, valor_centavos,
+                                    status, mp_payment_id)
+           VALUES ($1, $2, $3, $4, 'DUPLICADO', $5)
+           ON CONFLICT (mp_payment_id) DO NOTHING`,
+          [assinatura.empresa_id, assinatura.plano, assinatura.periodo,
+           Math.round(valorPago * 100), String(paymentId)]
+        );
+        return;
+      }
       console.log(`[assinatura] ${assinaturaId} já aprovada — ignorando repetição.`);
       return;
     }
@@ -191,7 +231,10 @@ async function processarAssinatura(paymentId) {
       );
       return;
     }
-    const esperado = plano.valor_centavos / 100;
+    // Confere contra o valor da PREFERÊNCIA criada (o que o petshop viu na
+    // tela). Se a tabela mudar de preço no meio, quem já estava pagando não
+    // é penalizado nem beneficiado.
+    const esperado = assinatura.valor_centavos / 100;
     if (Math.abs(valorPago - esperado) >= 0.01) {
       console.error(`[assinatura] valor divergente em ${assinaturaId}: pago ${valorPago}, esperado ${esperado}.`);
       await query(
@@ -227,12 +270,27 @@ async function processarAssinatura(paymentId) {
 
 /** Recupera assinaturas cujo webhook se perdeu. */
 async function reconciliarAssinaturas(limiteMinutos = 10) {
+  // A limpeza roda SEMPRE: cobrança não paga em 24h vira EXPIRADA. Sem
+  // isso a fila entope de PENDENTE morto e o LIMIT deixa de alcançar os
+  // pagamentos reais. Não depende das credenciais do Mercado Pago.
+  const morta = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const expiradas = await executeQuery(
+    `UPDATE assinaturas SET status = 'EXPIRADA'
+      WHERE status = 'PENDENTE' AND criado_em < $1`,
+    [morta]
+  );
+  if (expiradas.rowsAffected[0]) {
+    console.log(`[assinatura] ${expiradas.rowsAffected[0]} cobrança(s) sem pagamento expiradas.`);
+  }
+
+  // Buscar no Mercado Pago exige credencial; a limpeza acima, não.
   if (!cobrancaDisponivel()) return 0;
+
   const corte = new Date(Date.now() - limiteMinutos * 60 * 1000).toISOString();
   const r = await executeQuery(
     `SELECT id, mp_preference_id FROM assinaturas
       WHERE status = 'PENDENTE' AND mp_preference_id IS NOT NULL AND criado_em < $1
-      ORDER BY criado_em LIMIT 50`,
+      ORDER BY criado_em DESC LIMIT 50`,
     [corte]
   );
   let recuperadas = 0;
