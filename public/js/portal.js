@@ -26,10 +26,19 @@
     SEPARADO: 'Separado, saindo para entrega', EM_ROTA: 'A caminho', ENTREGUE: 'Entregue',
   };
 
+  // Data de calendário (DATE) ancora ao meio-dia local; timestamp de
+  // verdade (hora do registro) converte normalmente. Sem isso o fuso
+  // mostra o dia anterior.
+  function ehDataDeCalendario(texto) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(texto) || /^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z$/.test(texto);
+  }
+
   function dataCurta(valor) {
     if (!valor) return '';
     const texto = String(valor);
-    const d = /^\d{4}-\d{2}-\d{2}/.test(texto) ? new Date(`${texto.slice(0, 10)}T12:00:00`) : new Date(valor);
+    const d = ehDataDeCalendario(texto)
+      ? new Date(`${texto.slice(0, 10)}T12:00:00`)
+      : new Date(valor);
     return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   }
 
