@@ -1146,6 +1146,31 @@ try {
       JSON.stringify(mortas.rows[0]));
   }
 
+  console.log('\n— Guia de ativação do app do cliente —');
+  {
+    const at = await chamar('GET', '/api/dashboard/ativacao', { token: tokenA });
+    verificar('guia lista os passos e diz o que o cliente vê',
+      at.status === 200 && at.dados.passos.length >= 5 &&
+      typeof at.dados.completo === 'boolean' && at.dados.cliente_ve.saldo === true,
+      JSON.stringify(at.dados.cliente_ve));
+
+    const passo = c => at.dados.passos.find(p => p.chave === c);
+    verificar('marca como feito o que já está configurado',
+      passo('servicos').pronto === true && passo('pacotes').pronto === true &&
+      passo('online').pronto === true && passo('pagamento').pronto === true,
+      JSON.stringify(at.dados.passos.map(p => p.chave + ':' + p.pronto)));
+
+    verificar('com tudo ligado, o cliente pode agendar e comprar',
+      at.dados.cliente_ve.agendar === true && at.dados.cliente_ve.comprar_pacote === true &&
+      at.dados.completo === true,
+      JSON.stringify(at.dados.cliente_ve));
+
+    await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas', aceita_online: false } });
+    const desligado = await chamar('GET', '/api/dashboard/ativacao', { token: tokenA });
+    verificar('desligar o app aparece no guia e no que o cliente vê',
+      desligado.dados.completo === false && desligado.dados.cliente_ve.agendar === false);
+    await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas', aceita_online: true } });
+  }
   console.log('\n— Hub, saúde e limites —');
   const hub = await chamar('GET', '/api/hub/metrics', { token: 'hub-de-teste' });
   verificar('hub com token certo traz métricas no contrato do Safer Hub',

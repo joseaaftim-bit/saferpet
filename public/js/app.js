@@ -208,10 +208,11 @@
 
   async function verVisao() {
     const hoje = hojeISO();
-    const [kpis, dia, recentes] = await Promise.all([
+    const [kpis, dia, recentes, ativacao] = await Promise.all([
       api('/dashboard'),
       api(`/agenda/dia?data=${hoje}`),
       api('/baixas/recentes?limite=8'),
+      api('/dashboard/ativacao').catch(() => null),
     ]);
 
     const agendaHoje = dia.agendamentos.filter(a => a.status === 'AGENDADO');
@@ -222,6 +223,41 @@
         <h2>Visão geral</h2>
         <p>${esc(sessao.empresa.nome)} — ${dataExtensa(hoje)}</p>
       </div>
+
+      ${(ativacao && !ativacao.completo) ? `
+      <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 16px; border-color: var(--primary-border)">
+        <div>
+          <div class="rotulo-secao">Ativação do aplicativo do cliente</div>
+          <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 6px; line-height: 1.55">
+            Faltam ${ativacao.faltam} passo${ativacao.faltam === 1 ? '' : 's'} para o seu cliente
+            conseguir agendar e comprar pelo celular. Hoje ele vê:
+            <strong>${[
+              'o saldo dele',
+              ativacao.cliente_ve.agendar ? 'agendar horário' : null,
+              ativacao.cliente_ve.comprar_pacote ? 'comprar pacote' : null,
+              ativacao.cliente_ve.loja ? 'a loja' : null,
+            ].filter(Boolean).join(', ')}</strong>.
+          </p>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          ${ativacao.passos.map(p => `
+            <div class="linha linha-inset" style="padding: 12px 16px; ${p.pronto ? 'opacity: 0.6' : ''}">
+              <div style="width: 22px; height: 22px; border-radius: 999px; flex-shrink: 0; display: flex;
+                          align-items: center; justify-content: center;
+                          background: ${p.pronto ? 'var(--success-soft)' : 'var(--bg-panel)'};
+                          border: 1px solid ${p.pronto ? 'var(--success)' : 'var(--border-strong)'};
+                          color: var(--success)">
+                ${p.pronto ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.5 5.5L20 7"></path></svg>' : ''}
+              </div>
+              <div style="flex: 1">
+                <div class="linha-titulo" style="font-size: 0.92rem">${esc(p.titulo)}</div>
+                <div class="linha-sub">${esc(p.descricao)}</div>
+              </div>
+              ${p.pronto ? '<span class="chip ok">Feito</span>'
+                : `<a class="btn-primario btn-mini" href="${p.onde}" style="text-decoration: none">Configurar</a>`}
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
       <div class="kpis">
         <div class="cartao kpi">
           <div class="kpi-icone">${ICONES.agenda}</div>

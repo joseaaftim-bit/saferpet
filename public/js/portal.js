@@ -182,7 +182,19 @@
           <span>+${p.saldo} crédito${p.saldo === 1 ? '' : 's'}</span>
         </div>`).join('')}
       </div>` : `
-      <div class="vazio">Você ainda não tem pacote ativo.${podeComprar ? '<br>Compre um abaixo e já saia agendando.' : '<br>Fale com o petshop para contratar.'}</div>`}
+      <div class="vazio">
+        Você ainda não tem pacote ativo.
+        ${podeComprar
+          ? '<br>Compre um abaixo e já saia agendando.'
+          : (numeroWhats
+            ? '<br>Fale com o petshop para contratar o seu pacote de banhos.'
+            : '<br>Fale com o petshop para contratar.')}
+      </div>`}
+
+      ${(!podeAgendar && !podeComprar && !dados.petshop.vende_produtos && linkWhats) ? `
+      <a class="btn-primario" style="text-decoration: none; padding: 15px; font-size: 0.95rem" href="${linkWhats}">
+        ${FONE} Falar com o ${esc(dados.petshop.nome)}
+      </a>` : ''}
 
       <div style="display: flex; gap: 10px; flex-wrap: wrap">
         ${podeAgendar ? '<button class="btn-primario" id="botao-agendar" type="button" style="flex: 1; min-width: 140px">Agendar horário</button>' : ''}
