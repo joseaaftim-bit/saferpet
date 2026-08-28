@@ -127,7 +127,7 @@ router.get('/:id', async (req, res, next) => {
     if (!Number.isInteger(clienteId)) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
     const rc = await executeQuery(
-      `SELECT id, nome, telefone, email, observacoes, token_portal, criado_em
+      `SELECT id, nome, telefone, email, endereco, observacoes, token_portal, criado_em
          FROM clientes WHERE id = $1 AND empresa_id = $2 AND ativo`,
       [clienteId, req.usuario.empresa_id]
     );
@@ -215,19 +215,22 @@ router.get('/:id', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
-    const { nome, telefone, email, observacoes } = req.body || {};
+    const { nome, telefone, email, endereco, observacoes } = req.body || {};
     if (!Number.isInteger(clienteId) || !nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Dados inválidos.' });
     }
     const r = await executeQuery(
-      `UPDATE clientes SET nome = $1, telefone = $2, email = $3, observacoes = $4
-        WHERE id = $5 AND empresa_id = $6 AND ativo
+      `UPDATE clientes SET nome = $1, telefone = $2, email = $3, observacoes = $4,
+              endereco = CASE WHEN $5::boolean THEN $6 ELSE endereco END
+        WHERE id = $7 AND empresa_id = $8 AND ativo
         RETURNING id`,
       [
         String(nome).trim(),
         String(telefone || '').trim() || null,
         String(email || '').trim() || null,
         String(observacoes || '').trim() || null,
+        endereco !== undefined,
+        String(endereco || '').trim().slice(0, 500) || null,
         clienteId,
         req.usuario.empresa_id,
       ]

@@ -1,13 +1,23 @@
 # SaferPet
 
-Plataforma de petshop da SaferSoftware: **pacotes pré-pagos com créditos por
-serviço** e **agenda inteligente por duração**. O petshop cadastra os serviços
-que quiser (banho 30 min, banho e tosa 45 min...), monta pacotes livres
-(ex.: 20 banhos + 4 tosas por R$ 700), e a agenda calcula os horários pela
-duração: agendou 45 min às 10:00, o próximo livre é 10:45. **Leva-e-traz** de
-verdade: o veículo é um recurso com agenda própria — a busca bloqueia o
-deslocamento antes do serviço e a entrega entra no primeiro encaixe depois.
-O cliente acompanha créditos e agendamentos por um **link de portal** sem senha.
+Plataforma completa de petshop da SaferSoftware.
+
+**Para o petshop:** serviços com duração própria (banho 30 min, banho e tosa
+45 min...), pacotes pré-pagos livres (20 banhos + 4 tosas por R$ 700), agenda
+que calcula os horários pela duração (45 min às 10:00 → próximo livre 10:45),
+**leva-e-traz** com o veículo como recurso da agenda, loja de produtos com
+entrega na mesma rota, carteirinha de vacinação, fila de encaixe e relatórios.
+
+**Para o cliente:** um link sem senha onde ele vê os créditos, **compra pacote
+e produtos pagando por Pix ou cartão**, **agenda sozinho** (inclusive pedindo
+busca em casa), acompanha os pedidos, vê a foto do pet pronto e avalia o
+atendimento.
+
+O cenário que o produto precisa atender, de ponta a ponta: às 22h, com o
+petshop fechado, o cliente compra um pacote pelo celular e agenda a retirada
+das pets para as 10:00 do dia seguinte; de manhã a equipe encontra a venda e a
+retirada no painel, busca os pets em casa, e na volta o mesmo carro entrega a
+ração que ele pôs no carrinho.
 
 Primeiro caso de uso: Salva Patas Pet Spa & Vet (Campo Grande/MS).
 
@@ -53,8 +63,19 @@ Monorepo de origem única, sem build step:
 | `NODE_ENV` | sim | `production` |
 | `APP_URL` | sim | `https://pet.safersoftware.com.br` (monta o link do portal) |
 | `HUB_TOKEN` | não | Token para o Safer Hub ler `/api/hub/metrics`. Sem ela a rota responde 503. |
+| `CRIPTO_CHAVE` | não | 32 bytes em hex. Cifra as credenciais de Mercado Pago dos petshops. Sem ela, deriva do `JWT_SECRET` — **trocar o `JWT_SECRET` invalida as credenciais salvas** (cada petshop recadastra). |
 | `TRIAL_DIAS` | não | Dias de teste ao criar petshop (padrão 14). |
 | `DATABASE_SSL` | não | `true` só se usar a URL pública do Postgres. |
+
+### Mercado Pago (por petshop)
+
+O dinheiro do cliente vai direto para a conta do petshop: cada empresa
+cadastra **as próprias credenciais** em Configurações — o access token de
+produção e a chave secreta do webhook, ambos guardados cifrados (AES-256-GCM)
+e nunca devolvidos em leitura. A URL do webhook aparece pronta na mesma tela
+(`/api/pagamentos/webhook/:empresa_id`). Sem as **duas** credenciais, o botão
+de comprar não aparece para o cliente — pagar sem o webhook configurado
+significaria pagar sem receber crédito.
 
 Gerar segredos:
 
@@ -99,16 +120,31 @@ node scripts/testar-api.mjs https://pet.safersoftware.com.br
   regenerar (invalida o link antigo). Sem pagamento online no v1 — não há
   webhook exposto.
 
-## Roadmap (plano SaferPet 2.0)
+## O que está pronto
 
-- **Fase 2** — conta do cliente: compra de pacote online (Mercado Pago do
-  petshop, webhook fecha por padrão), agendamento pelo próprio cliente,
-  avisos no WhatsApp.
-- **Fase 3** — loja de produtos com entrega na rota do leva-e-traz.
-- **Fase 4** — foto do pet pronto, assinatura recorrente, carteirinha de
-  vacinação, fila de encaixe, relatórios.
+- **Fase 1** — serviços com duração, pacotes com créditos por serviço, agenda
+  por recurso, leva-e-traz, exceções de funcionamento.
+- **Fase 2** — app do cliente pelo link: compra de pacote (Mercado Pago do
+  petshop), agendamento próprio com busca em casa, cancelamento.
+- **Fase 3** — loja de produtos, carrinho, taxa e frete grátis, pedido pago
+  entra na rota do veículo, painel de pedidos.
+- **Fase 4** — foto do pet pronto, carteirinha de vacinação com lembrete de
+  reforço, fila de encaixe, avaliação pós-atendimento, relatórios do dono.
+
+## Roadmap
+
+- Assinatura recorrente (plano mensal com horário fixo).
+- Avisos automáticos no WhatsApp (hoje os links são montados para envio manual).
 - Plugar no Safer Hub (rota `/api/hub/metrics` já pronta, falta o card no Hub).
 
-Nota de teste: o pg-mem não valida `FOR UPDATE` (os harnesses removem a
-cláusula). Toda query nova com `FOR UPDATE` sobre join precisa de `OF` nos
-lados internos — conferir manualmente ou na fumaça contra Postgres real.
+## Armadilhas conhecidas (leia antes de mexer)
+
+- **`FOR UPDATE` em join externo precisa de `OF`** nos lados internos. O
+  pg-mem da bateria não valida a cláusula (os harnesses a removem), então o
+  erro só aparece em produção — três rotas já quebraram assim.
+- **pg-mem não faz subquery correlacionada** nem aritmética com parâmetro sem
+  cast: use `$1::int` e junção em JS quando precisar.
+- **O webhook não pode confiar em nada que venha no corpo**: valor, produto e
+  destino saem sempre do servidor. A bateria simula o Mercado Pago inteiro
+  (`scripts/testar-local.mjs`) — inclusive pagamento repetido, valor
+  divergente, webhook perdido (reconciliação) e carrinho abandonado.

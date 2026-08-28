@@ -4,6 +4,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { executeQuery } = require('../database');
 const { somenteAdmin } = require('../middlewares/autenticacao');
+const { cifrar, decifrar, mascarar } = require('../util/cripto');
+const { APP_URL } = require('../config/segredos');
 
 const router = express.Router();
 
@@ -11,17 +13,32 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 router.get('/', somenteAdmin, async (req, res, next) => {
   try {
-    const usuarios = await executeQuery(
-      `SELECT id, nome, email, permissoes, ativo, criado_em
-         FROM usuarios WHERE empresa_id = $1 ORDER BY nome`,
-      [req.usuario.empresa_id]
-    );
+    const [usuarios, config] = await Promise.all([
+      executeQuery(
+        `SELECT id, nome, email, permissoes, ativo, criado_em
+           FROM usuarios WHERE empresa_id = $1 ORDER BY nome`,
+        [req.usuario.empresa_id]),
+      executeQuery(
+        `SELECT aceita_online, mp_access_token, mp_webhook_secret,
+                vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos
+           FROM empresas WHERE id = $1`,
+        [req.usuario.empresa_id]),
+    ]);
+    const c = config.recordset[0];
     res.json({
       id: req.empresa.id,
       nome: req.empresa.nome,
       whatsapp: req.empresa.whatsapp,
       plano: req.empresa.plano,
       acesso_ate: req.empresa.acesso_ate,
+      aceita_online: !!c.aceita_online,
+      vende_produtos: !!c.vende_produtos,
+      taxa_entrega_centavos: c.taxa_entrega_centavos || 0,
+      entrega_gratis_acima_centavos: c.entrega_gratis_acima_centavos,
+      // Nunca devolve o segredo: só a marca de que existe e o final dele.
+      mp_access_token_final: mascarar(decifrar(c.mp_access_token)),
+      mp_webhook_configurado: !!decifrar(c.mp_webhook_secret),
+      url_webhook: `${APP_URL}/api/pagamentos/webhook/${req.empresa.id}`,
       usuarios: usuarios.recordset,
     });
   } catch (err) {
@@ -31,15 +48,89 @@ router.get('/', somenteAdmin, async (req, res, next) => {
 
 router.put('/', somenteAdmin, async (req, res, next) => {
   try {
-    const { nome, whatsapp } = req.body || {};
+    const { nome, whatsapp, aceita_online, vende_produtos,
+            taxa_entrega_centavos, entrega_gratis_acima_centavos } = req.body || {};
     if (!nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Informe o nome do petshop.' });
     }
+
+    const taxa = taxa_entrega_centavos === undefined ? null : parseInt(taxa_entrega_centavos, 10);
+    if (taxa !== null && (!Number.isInteger(taxa) || taxa < 0)) {
+      return res.status(400).json({ erro: 'Taxa de entrega inválida.' });
+    }
+    const gratisAcima = entrega_gratis_acima_centavos === undefined ? undefined
+      : (entrega_gratis_acima_centavos === null || entrega_gratis_acima_centavos === ''
+        ? null : parseInt(entrega_gratis_acima_centavos, 10));
+    if (gratisAcima !== undefined && gratisAcima !== null &&
+        (!Number.isInteger(gratisAcima) || gratisAcima < 0)) {
+      return res.status(400).json({ erro: 'Valor de frete grátis inválido.' });
+    }
+
     await executeQuery(
-      'UPDATE empresas SET nome = $1, whatsapp = $2 WHERE id = $3',
-      [String(nome).trim(), String(whatsapp || '').trim() || null, req.usuario.empresa_id]
+      `UPDATE empresas SET nome = $1, whatsapp = $2,
+              aceita_online = COALESCE($3, aceita_online),
+              vende_produtos = COALESCE($4, vende_produtos),
+              taxa_entrega_centavos = COALESCE($5, taxa_entrega_centavos),
+              entrega_gratis_acima_centavos = CASE WHEN $6::boolean THEN $7::int
+                                                   ELSE entrega_gratis_acima_centavos END
+        WHERE id = $8`,
+      [String(nome).trim(), String(whatsapp || '').trim() || null,
+       typeof aceita_online === 'boolean' ? aceita_online : null,
+       typeof vende_produtos === 'boolean' ? vende_produtos : null,
+       taxa,
+       gratisAcima !== undefined, gratisAcima === undefined ? null : gratisAcima,
+       req.usuario.empresa_id]
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Credenciais do Mercado Pago do petshop ────────────────────────
+// Guardadas cifradas; nunca voltam em leitura. Enviar string vazia apaga.
+
+router.put('/pagamento', somenteAdmin, async (req, res, next) => {
+  try {
+    const { mp_access_token, mp_webhook_secret } = req.body || {};
+
+    if (mp_access_token !== undefined) {
+      const valor = String(mp_access_token).trim();
+      if (valor && !/^(APP_USR-|TEST-)/.test(valor)) {
+        return res.status(400).json({
+          erro: 'Access token inválido. Copie o token de produção (APP_USR-…) do painel do Mercado Pago.',
+        });
+      }
+      await executeQuery('UPDATE empresas SET mp_access_token = $1 WHERE id = $2',
+        [valor ? cifrar(valor) : null, req.usuario.empresa_id]);
+    }
+
+    if (mp_webhook_secret !== undefined) {
+      const valor = String(mp_webhook_secret).trim();
+      await executeQuery('UPDATE empresas SET mp_webhook_secret = $1 WHERE id = $2',
+        [valor ? cifrar(valor) : null, req.usuario.empresa_id]);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Pagamentos recebidos (para o petshop conferir as vendas online).
+router.get('/pagamentos', somenteAdmin, async (req, res, next) => {
+  try {
+    const r = await executeQuery(
+      `SELECT p.id, p.tipo, p.valor_centavos, p.status, p.criado_em, p.aprovado_em,
+              c.id AS cliente_id, c.nome AS cliente_nome, m.nome AS pacote_nome
+         FROM pagamentos p
+         JOIN clientes c ON c.id = p.cliente_id
+         LEFT JOIN pacotes_modelo m ON m.id = p.modelo_id
+        WHERE p.empresa_id = $1
+        ORDER BY p.criado_em DESC LIMIT 50`,
+      [req.usuario.empresa_id]
+    );
+    res.json(r.recordset);
   } catch (err) {
     next(err);
   }

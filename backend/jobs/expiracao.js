@@ -27,7 +27,20 @@ function iniciarJobs() {
       marcarPacotesVencidos().catch(err => console.error('[jobs] Falha ao marcar vencidos:', err));
     }, { timezone: 'America/Sao_Paulo' })
   );
-  console.log('[jobs] Agendado: pacotes vencidos (03:15 America/Sao_Paulo).');
+
+  // A cada 10 minutos: recupera pagamentos cujo webhook se perdeu e
+  // devolve o estoque de carrinhos abandonados.
+  jobs.push(
+    cron.schedule('*/10 * * * *', () => {
+      const pagamentos = require('../rotas/pagamentos');
+      pagamentos.reconciliarPendentes()
+        .catch(err => console.error('[jobs] Falha ao reconciliar pagamentos:', err.message));
+      pagamentos.expirarPedidosAbandonados()
+        .catch(err => console.error('[jobs] Falha ao expirar pedidos:', err.message));
+    }, { timezone: 'America/Sao_Paulo' })
+  );
+
+  console.log('[jobs] Agendados: pacotes vencidos (03:15) e reconciliação de pagamentos (10 em 10 min).');
 
   // Roda uma vez no boot: recupera execuções perdidas do cron (deploy ou
   // queda no horário agendado).

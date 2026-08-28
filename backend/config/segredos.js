@@ -39,4 +39,27 @@ module.exports = {
   // URL pública do app — monta o link do portal do cliente. Obrigatória em
   // produção: com fallback, o petshop mandaria link de localhost por WhatsApp.
   APP_URL: obrigatorioEmProducao('APP_URL').replace(/\/+$/, ''),
+
+  // Cifra as credenciais de Mercado Pago de cada petshop guardadas no
+  // banco. Opcional: sem ela, deriva do JWT_SECRET (que já é forte e
+  // secreto) — assim nenhum ambiente quebra por falta de variável nova.
+  // Trocar a chave (ou o JWT_SECRET, quando derivada) invalida as
+  // credenciais salvas e cada petshop precisa recadastrar.
+  CRIPTO_CHAVE: resolverChaveCripto(),
 };
+
+function resolverChaveCripto() {
+  const informada = process.env.CRIPTO_CHAVE;
+  if (informada) {
+    if (!/^[0-9a-f]{64}$/i.test(informada)) {
+      console.error('[boot] FATAL: CRIPTO_CHAVE precisa ter 32 bytes em hex (64 caracteres).');
+      process.exit(1);
+    }
+    return informada;
+  }
+  const base = process.env.JWT_SECRET || DEV_DEFAULTS.JWT_SECRET;
+  return require('crypto')
+    .createHash('sha256')
+    .update(`saferpet-cripto-v1:${base}`)
+    .digest('hex');
+}

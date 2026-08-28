@@ -294,9 +294,11 @@
           : a.status === 'FALTOU' ? 'faltou'
           : (a.tipo !== 'SERVICO' ? 'rota' : '');
         const prefixo = a.tipo === 'BUSCA' ? 'Buscar: ' : (a.tipo === 'ENTREGA' ? 'Entregar: ' : '');
+        const marcaCliente = a.origem === 'CLIENTE' ? ' •' : '';
         return `
-          <div class="agenda-bloco ${classe}" data-ag="${a.id}" style="top: ${topo}px; height: ${alt - 4}px">
-            ${a.inicio} ${prefixo}${esc(a.cliente_nome)}
+          <div class="agenda-bloco ${classe}" data-ag="${a.id}" style="top: ${topo}px; height: ${alt - 4}px"
+               title="${a.origem === 'CLIENTE' ? 'Agendado pelo cliente no aplicativo' : ''}">
+            ${a.inicio} ${prefixo}${esc(a.cliente_nome)}${marcaCliente}
             <small>${a.pet_nome ? esc(a.pet_nome) + ' · ' : ''}${esc(a.servico_nome || '')}</small>
           </div>`;
       }).join('');
@@ -504,6 +506,12 @@
           <input type="checkbox" id="consumir-credito" checked style="width: 17px; height: 17px; accent-color: var(--primary)">
           Ao concluir, dar baixa de 1 crédito do pacote
         </label>` : ''}
+      ${ag.tipo === 'SERVICO' ? `
+        <label class="btn-fantasma" style="align-self: flex-start; cursor: pointer">
+          Enviar foto do pet pronto
+          <input type="file" id="campo-foto" accept="image/*" capture="environment" style="display: none">
+        </label>
+        <div id="aviso-foto" class="linha-sub"></div>` : ''}
       <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap">
         <button class="btn-fantasma" data-fechar type="button">Fechar</button>
         ${podeAgir ? `
@@ -512,6 +520,28 @@
           <button class="btn-primario" id="acao-concluir" type="button">Concluir</button>` : ''}
       </div>`);
     ligarFechar(modal);
+
+    const campoFoto = modal.querySelector('#campo-foto');
+    if (campoFoto) {
+      campoFoto.addEventListener('change', async () => {
+        const arquivo = campoFoto.files && campoFoto.files[0];
+        if (!arquivo) return;
+        const aviso = modal.querySelector('#aviso-foto');
+        aviso.textContent = 'Preparando a foto…';
+        try {
+          const imagem = await reduzirImagem(arquivo);
+          await api('/extras/fotos', { method: 'POST', body: {
+            cliente_id: ag.cliente_id, pet_id: ag.pet_id, agendamento_id: ag.id,
+            conteudo: imagem, legenda: ag.pet_nome ? `${ag.pet_nome} prontinho!` : 'Pronto!',
+          }});
+          aviso.textContent = 'Foto enviada — o cliente já pode ver no aplicativo.';
+          toast('Foto enviada ao cliente.');
+        } catch (err) {
+          aviso.textContent = '';
+          toast(err.message, true);
+        }
+      });
+    }
 
     async function executar(acao) {
       try {
@@ -646,7 +676,12 @@
   // ═══ Ficha do cliente ════════════════════════════════════════════
 
   async function verFicha(clienteId) {
-    const c = await api(`/clientes/${clienteId}`);
+    const [c, vacinas] = await Promise.all([
+      api(`/clientes/${clienteId}`),
+      api('/extras/vacinas').catch(() => []),
+    ]);
+    const petsDoCliente = new Set(c.pets.map(p => p.id));
+    const vacinasCliente = vacinas.filter(v => petsDoCliente.has(v.pet_id));
     const ativo = pacoteEmConsumo(c.pacotes);
     const proximos = c.pacotes.filter(p => p.status === 'ATIVO' && (!ativo || p.id !== ativo.id));
     const anteriores = c.pacotes.filter(p => p.status !== 'ATIVO');
@@ -662,6 +697,7 @@
         <div class="cabecalho-pagina">
           <h2>${esc(c.nome)}</h2>
           <p>${[c.telefone, c.email].filter(Boolean).map(esc).join(' · ') || 'sem contato cadastrado'} · cliente desde ${dataLonga(c.criado_em)}</p>
+          ${c.endereco ? `<p style="margin-top: 6px"><strong>Buscar em:</strong> ${esc(c.endereco)}</p>` : ''}
         </div>
         <div style="display: flex; gap: 10px; flex-wrap: wrap">
           <button class="btn-fantasma" id="botao-editar" type="button">Editar</button>
@@ -715,6 +751,25 @@
                 </div>
               </div>`).join('') : '<div class="linha-sub">Nenhum pet cadastrado.</div>'}
           </div>
+
+          ${c.pets.length ? `
+          <div class="cartao" style="padding: 22px 24px; display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div class="rotulo-secao">Carteirinha de vacinação</div>
+              <button class="btn-fantasma btn-mini" id="botao-nova-vacina" type="button">Registrar vacina</button>
+            </div>
+            ${vacinasCliente.length ? vacinasCliente.map(v => {
+              const vencida = v.reforco_em && String(v.reforco_em).slice(0, 10) < hojeISO();
+              return `
+              <div class="linha linha-inset" style="padding: 10px 14px">
+                <div style="flex: 1">
+                  <div class="linha-titulo" style="font-size: 0.9rem">${esc(v.pet_nome)} · ${esc(v.nome)}</div>
+                  <div class="linha-sub">aplicada em ${dataLonga(v.aplicada_em)}${v.reforco_em ? ` · reforço ${dataLonga(v.reforco_em)}` : ''}</div>
+                </div>
+                ${v.reforco_em ? `<span class="chip ${vencida ? 'alerta' : 'ok'}">${vencida ? 'Reforço vencido' : 'Em dia'}</span>` : ''}
+              </div>`;
+            }).join('') : '<div class="linha-sub">Nenhuma vacina registrada.</div>'}
+          </div>` : ''}
 
           ${c.agendamentos.length ? `
           <div class="cartao" style="padding: 22px 24px; display: flex; flex-direction: column; gap: 10px">
@@ -798,6 +853,8 @@
     document.getElementById('botao-novo-pet').addEventListener('click', () => modalNovoPet(c.id));
     const botaoAjustar = document.getElementById('botao-ajustar-pacote');
     if (botaoAjustar) botaoAjustar.addEventListener('click', () => modalAjustarPacote(ativo, c.id));
+    const botaoVacina = document.getElementById('botao-nova-vacina');
+    if (botaoVacina) botaoVacina.addEventListener('click', () => modalNovaVacina(c));
 
     conteudo.querySelectorAll('[data-estornar]').forEach(b =>
       b.addEventListener('click', async () => {
@@ -823,17 +880,19 @@
         <div class="campo"><label>Nome</label><input name="nome" value="${esc(c.nome)}" required></div>
         <div class="campo"><label>Telefone / WhatsApp</label><input name="telefone" value="${esc(c.telefone || '')}"></div>
         <div class="campo"><label>E-mail</label><input name="email" type="email" value="${esc(c.email || '')}"></div>
+        <div class="campo"><label>Endereço para buscar o pet</label>
+          <textarea name="endereco" rows="2" placeholder="Rua, número, bairro e referência">${esc(c.endereco || '')}</textarea></div>
         <div class="campo"><label>Observações</label><textarea name="observacoes" rows="2">${esc(c.observacoes || '')}</textarea></div>
         ${rodapeModal('Salvar')}
       </form>`);
     ligarFechar(modal);
-    modal.querySelector('#form-modal').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
+    aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
       const f = new FormData(ev.target);
       try {
         await api(`/clientes/${c.id}`, { method: 'PUT', body: {
           nome: f.get('nome'), telefone: f.get('telefone'),
-          email: f.get('email'), observacoes: f.get('observacoes'),
+          email: f.get('email'), endereco: f.get('endereco'),
+          observacoes: f.get('observacoes'),
         }});
         fecharModal(); toast('Cliente atualizado.'); verFicha(c.id);
       } catch (err) { toast(err.message, true); }
@@ -902,6 +961,48 @@
           raca: f.get('raca'), porte: f.get('porte'), observacoes: f.get('observacoes'),
         }});
         fecharModal(); toast('Pet cadastrado.'); verFicha(clienteId);
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  function modalNovaVacina(c) {
+    const modal = abrirModal(`
+      <h3>Registrar vacina</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>Pet</label>
+          <select name="pet_id" required>
+            ${c.pets.map(p => `<option value="${p.id}">${esc(p.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="campo"><label>Vacina</label>
+          <input name="nome" list="lista-vacinas" placeholder="V10" required>
+          <datalist id="lista-vacinas">
+            <option value="V8"></option><option value="V10"></option>
+            <option value="Antirrábica"></option><option value="Gripe canina"></option>
+            <option value="Giárdia"></option><option value="V4 felina"></option>
+          </datalist>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+          <div class="campo"><label>Aplicada em</label>
+            <input name="aplicada_em" type="date" value="${hojeISO()}" required></div>
+          <div class="campo"><label>Reforço em (meses)</label>
+            <input name="reforco_meses" type="number" min="1" max="120" step="1" value="12"></div>
+        </div>
+        <div class="campo"><label>Lote (opcional)</label><input name="lote"></div>
+        ${rodapeModal('Registrar')}
+      </form>`);
+    ligarFechar(modal);
+    aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
+      const f = new FormData(ev.target);
+      try {
+        await api('/extras/vacinas', { method: 'POST', body: {
+          pet_id: parseInt(f.get('pet_id'), 10),
+          nome: f.get('nome'),
+          aplicada_em: f.get('aplicada_em'),
+          reforco_meses: f.get('reforco_meses') ? parseInt(f.get('reforco_meses'), 10) : null,
+          lote: f.get('lote'),
+        }});
+        fecharModal(); toast('Vacina registrada.'); verFicha(c.id);
       } catch (err) { toast(err.message, true); }
     });
   }
@@ -1321,6 +1422,306 @@
     });
   }
 
+  // ═══ Loja (produtos e pedidos) ═══════════════════════════════════
+
+  const STATUS_PEDIDO_ROTULO = {
+    AGUARDANDO_PAGAMENTO: 'Aguardando pagamento', PAGO: 'Pago',
+    SEPARADO: 'Separado', EM_ROTA: 'Em rota', ENTREGUE: 'Entregue', CANCELADO: 'Cancelado',
+  };
+  const STATUS_PEDIDO_CHIP = {
+    AGUARDANDO_PAGAMENTO: '', PAGO: 'acento', SEPARADO: 'acento',
+    EM_ROTA: 'acento', ENTREGUE: 'ok', CANCELADO: 'alerta',
+  };
+  const PROXIMO_STATUS = { PAGO: 'SEPARADO', SEPARADO: 'EM_ROTA', EM_ROTA: 'ENTREGUE' };
+
+  async function verLoja() {
+    const [produtos, pedidos] = await Promise.all([api('/loja/produtos'), api('/loja/pedidos')]);
+    const abertos = pedidos.filter(p => !['ENTREGUE', 'CANCELADO'].includes(p.status));
+
+    conteudo.innerHTML = `
+      <div class="linha-cabecalho">
+        <div class="cabecalho-pagina">
+          <h2>Loja</h2>
+          <p>Produtos para venda no aplicativo e os pedidos do dia</p>
+        </div>
+        ${ehAdmin() ? '<button class="btn-primario" id="botao-novo-produto" type="button">Novo produto</button>' : ''}
+      </div>
+
+      <div class="rotulo-secao">Pedidos abertos</div>
+      ${abertos.length ? `<div class="lista">${abertos.map(p => `
+        <div class="linha">
+          <div class="linha-data" style="min-width: 52px">#${p.id}</div>
+          <div style="flex: 1; min-width: 160px">
+            <div class="linha-titulo">${esc(p.cliente_nome)}</div>
+            <div class="linha-sub">
+              ${(p.itens || []).map(i => `${i.quantidade}× ${esc(i.produto_nome)}`).join(', ')}
+              · ${formatarReais(p.valor_centavos)}
+            </div>
+            ${p.entrega === 'ENTREGA' ? `<div class="linha-sub">Entregar em: ${esc(p.endereco || 'endereço não informado')}${p.entrega_data ? ` · rota ${dataCurta(p.entrega_data)} às ${p.entrega_inicio}` : ''}</div>` : '<div class="linha-sub">Retirada no balcão</div>'}
+          </div>
+          <span class="chip ${STATUS_PEDIDO_CHIP[p.status] || ''}">${esc(STATUS_PEDIDO_ROTULO[p.status] || p.status)}</span>
+          ${PROXIMO_STATUS[p.status] ? `<button class="btn-primario btn-mini" data-avancar="${p.id}" data-para="${PROXIMO_STATUS[p.status]}" type="button">${esc(STATUS_PEDIDO_ROTULO[PROXIMO_STATUS[p.status]])}</button>` : ''}
+          ${p.entrega === 'ENTREGA' && ['PAGO', 'SEPARADO', 'EM_ROTA'].includes(p.status)
+            ? `<button class="btn-fantasma btn-mini" data-rota="${p.id}" type="button">${p.entrega_data ? 'Remarcar' : 'Pôr na rota'}</button>` : ''}
+          <button class="btn-fantasma btn-mini perigo" data-cancelar-pedido="${p.id}" type="button">Cancelar</button>
+        </div>`).join('')}</div>`
+      : '<div class="vazio">Nenhum pedido aberto.</div>'}
+
+      <div class="rotulo-secao" style="margin-top: 8px">Produtos</div>
+      ${produtos.length ? `<div class="lista">${produtos.map(p => `
+        <div class="linha" style="${p.ativo ? '' : 'opacity: 0.55'}">
+          <div style="flex: 1">
+            <div class="linha-titulo">${esc(p.nome)}</div>
+            <div class="linha-sub">${formatarReais(p.preco_centavos)}${p.controla_estoque ? ` · ${p.estoque} em estoque` : ' · estoque livre'}${p.descricao ? ` · ${esc(p.descricao)}` : ''}</div>
+          </div>
+          ${p.controla_estoque && p.estoque === 0 ? '<span class="chip alerta">Sem estoque</span>' : (p.ativo ? '<span class="chip ok">À venda</span>' : '<span class="chip">Inativo</span>')}
+          ${ehAdmin() ? `<button class="btn-fantasma btn-mini" data-editar-produto="${p.id}" type="button">Editar</button>` : ''}
+        </div>`).join('')}</div>`
+      : `<div class="vazio">Nenhum produto cadastrado.${ehAdmin() ? '<br>Cadastre a ração e os petiscos que o cliente pode pedir pelo aplicativo.' : ''}</div>`}`;
+
+    const bNovo = document.getElementById('botao-novo-produto');
+    if (bNovo) bNovo.addEventListener('click', () => modalProduto(null));
+    conteudo.querySelectorAll('[data-editar-produto]').forEach(b =>
+      b.addEventListener('click', () => {
+        const p = produtos.find(x => x.id === parseInt(b.dataset.editarProduto, 10));
+        if (p) modalProduto(p);
+      }));
+
+    conteudo.querySelectorAll('[data-avancar]').forEach(b =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/loja/pedidos/${b.dataset.avancar}`, { method: 'PUT', body: { status: b.dataset.para } });
+          toast('Pedido atualizado.'); verLoja();
+        } catch (err) { toast(err.message, true); }
+      }));
+
+    conteudo.querySelectorAll('[data-cancelar-pedido]').forEach(b =>
+      b.addEventListener('click', async () => {
+        if (!window.confirm('Cancelar o pedido? O estoque volta e a entrega sai da rota.')) return;
+        try {
+          await api(`/loja/pedidos/${b.dataset.cancelarPedido}`, { method: 'PUT', body: { status: 'CANCELADO' } });
+          toast('Pedido cancelado.'); verLoja();
+        } catch (err) { toast(err.message, true); }
+      }));
+
+    conteudo.querySelectorAll('[data-rota]').forEach(b =>
+      b.addEventListener('click', () => {
+        const modal = abrirModal(`
+          <h3>Entrega na rota</h3>
+          <p style="font-size: 0.88rem; color: var(--text-muted)">
+            O pedido entra na agenda do veículo no primeiro horário livre do dia escolhido.
+          </p>
+          <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+            <div class="campo"><label>Dia da entrega</label>
+              <input name="data" type="date" min="${hojeISO()}" value="${hojeISO()}" required></div>
+            ${rodapeModal('Pôr na rota')}
+          </form>`);
+        ligarFechar(modal);
+        aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
+          const f = new FormData(ev.target);
+          try {
+            const r = await api(`/loja/pedidos/${b.dataset.rota}/entrega`, { method: 'POST', body: { data: f.get('data') } });
+            fecharModal(); toast(`Entrega marcada para ${dataCurta(r.data)} às ${r.inicio}.`); verLoja();
+          } catch (err) { toast(err.message, true); }
+        });
+      }));
+  }
+
+  function modalProduto(p) {
+    const modal = abrirModal(`
+      <h3>${p ? 'Editar produto' : 'Novo produto'}</h3>
+      <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo"><label>Nome</label><input name="nome" value="${p ? esc(p.nome) : ''}" placeholder="Ração Premium 10kg" required></div>
+        <div class="campo"><label>Descrição</label><textarea name="descricao" rows="2">${p ? esc(p.descricao || '') : ''}</textarea></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+          <div class="campo"><label>Preço (R$)</label><input name="preco" inputmode="decimal" value="${p ? (p.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="250,00" required></div>
+          <div class="campo"><label>Estoque</label><input name="estoque" type="number" min="0" step="1" value="${p ? p.estoque : '0'}" required></div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+          <input type="checkbox" name="controla_estoque" ${!p || p.controla_estoque ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+          Controlar estoque (desligue para produto sob encomenda)
+        </label>
+        ${p ? `
+        <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+          <input type="checkbox" name="ativo" ${p.ativo ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+          À venda no aplicativo
+        </label>` : ''}
+        ${rodapeModal(p ? 'Salvar' : 'Cadastrar')}
+      </form>`);
+    ligarFechar(modal);
+    aoEnviar(modal.querySelector('#form-modal'), async (ev) => {
+      const f = new FormData(ev.target);
+      const centavos = paraCentavos(f.get('preco'));
+      if (!Number.isFinite(centavos)) { toast('Preço inválido.', true); return; }
+      const corpo = {
+        nome: f.get('nome'), descricao: f.get('descricao'),
+        preco_centavos: centavos, estoque: parseInt(f.get('estoque'), 10) || 0,
+        controla_estoque: f.get('controla_estoque') === 'on',
+      };
+      try {
+        if (p) {
+          corpo.ativo = f.get('ativo') === 'on';
+          await api(`/loja/produtos/${p.id}`, { method: 'PUT', body: corpo });
+        } else {
+          await api('/loja/produtos', { method: 'POST', body: corpo });
+        }
+        fecharModal(); toast('Loja atualizada.'); verLoja();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  // ═══ Relatórios ══════════════════════════════════════════════════
+
+  async function verRelatorios() {
+    const [r, reforcos, fila] = await Promise.all([
+      api('/extras/relatorios?dias=30'),
+      api('/extras/vacinas/reforcos?dias=45'),
+      api('/extras/fila'),
+    ]);
+
+    const concluidos = (r.agendamentos.find(a => a.status === 'CONCLUIDO') || {}).total || 0;
+    const faltas = (r.agendamentos.find(a => a.status === 'FALTOU') || {}).total || 0;
+    const cancelados = (r.agendamentos.find(a => a.status === 'CANCELADO') || {}).total || 0;
+    const maxServico = Math.max(1, ...r.servicos_realizados.map(s => s.total));
+
+    conteudo.innerHTML = `
+      <div class="cabecalho-pagina">
+        <h2>Relatórios</h2>
+        <p>Últimos ${r.dias} dias</p>
+      </div>
+
+      <div class="kpis">
+        <div class="cartao kpi">
+          <div><div class="kpi-rotulo">Pacotes vendidos</div>
+            <div class="kpi-valor">${r.pacotes_vendidos.total}</div>
+            <div class="linha-sub">${formatarReais(r.pacotes_vendidos.valor_centavos)}</div></div>
+        </div>
+        <div class="cartao kpi">
+          <div><div class="kpi-rotulo">Produtos vendidos</div>
+            <div class="kpi-valor">${r.produtos_vendidos.total}</div>
+            <div class="linha-sub">${formatarReais(r.produtos_vendidos.valor_centavos)}</div></div>
+        </div>
+        <div class="cartao kpi">
+          <div><div class="kpi-rotulo">Atendimentos</div>
+            <div class="kpi-valor">${concluidos}</div>
+            <div class="linha-sub">${faltas} falta(s) · ${cancelados} cancelado(s)</div></div>
+        </div>
+        <div class="cartao kpi">
+          <div><div class="kpi-rotulo">Avaliação</div>
+            <div class="kpi-valor">${r.avaliacoes.total ? r.avaliacoes.media.toFixed(1) : '—'}</div>
+            <div class="linha-sub">${r.avaliacoes.total} avaliação(ões)</div></div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px">
+        <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
+          <div class="rotulo-secao">Serviços realizados</div>
+          ${r.servicos_realizados.length ? r.servicos_realizados.map(s => `
+            <div style="display: flex; align-items: center; gap: 12px">
+              <div style="flex: 1; font-size: 0.9rem; font-weight: 600">${esc(s.servico)}</div>
+              <div class="barra" style="width: 120px"><div style="width: ${Math.round((s.total / maxServico) * 100)}%"></div></div>
+              <div style="font-variant-numeric: tabular-nums; font-size: 0.9rem; min-width: 28px; text-align: right">${s.total}</div>
+            </div>`).join('') : '<div class="linha-sub">Nenhum serviço no período.</div>'}
+        </div>
+
+        <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 12px">
+          <div class="rotulo-secao">Reforços de vacina a vencer</div>
+          ${reforcos.length ? reforcos.map(v => `
+            <div class="linha linha-inset" style="padding: 10px 14px">
+              <div class="linha-data" style="font-size: 1rem">${dataCurta(v.reforco_em)}</div>
+              <div style="flex: 1">
+                <div class="linha-titulo" style="font-size: 0.9rem">${esc(v.pet_nome)} · ${esc(v.nome)}</div>
+                <div class="linha-sub"><a href="#/cliente/${v.cliente_id}">${esc(v.cliente_nome)}</a>${v.telefone ? ' · ' + esc(v.telefone) : ''}</div>
+              </div>
+              ${v.telefone ? `<a class="btn-fantasma btn-mini" style="text-decoration: none" target="_blank" rel="noopener"
+                href="https://wa.me/${esc(numeroWhatsApp(v.telefone))}?text=${encodeURIComponent(`Olá! A vacina ${v.nome} do(a) ${v.pet_nome} vence em ${dataLonga(v.reforco_em)}. Quer agendar?`)}">Avisar</a>` : ''}
+            </div>`).join('') : '<div class="linha-sub">Nenhum reforço próximo.</div>'}
+        </div>
+
+        <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 12px">
+          <div class="rotulo-secao">Fila de encaixe</div>
+          ${fila.length ? fila.map(f => `
+            <div class="linha linha-inset" style="padding: 10px 14px">
+              <div class="linha-data" style="font-size: 1rem">${dataCurta(f.data)}</div>
+              <div style="flex: 1">
+                <div class="linha-titulo" style="font-size: 0.9rem">${esc(f.cliente_nome)}${f.pet_nome ? ' · ' + esc(f.pet_nome) : ''}</div>
+                <div class="linha-sub">${esc(f.servico_nome)} · ${esc(f.periodo.toLowerCase())}</div>
+              </div>
+              ${f.telefone ? `<a class="btn-fantasma btn-mini" style="text-decoration: none" target="_blank" rel="noopener"
+                href="https://wa.me/${esc(numeroWhatsApp(f.telefone))}?text=${encodeURIComponent(`Olá! Abriu um horário para ${f.servico_nome} em ${dataLonga(f.data)}. Quer?`)}">Oferecer</a>` : ''}
+              <button class="btn-fantasma btn-mini" data-fila-ok="${f.id}" type="button">Encaixado</button>
+              <button class="btn-fantasma btn-mini perigo" data-fila-nao="${f.id}" type="button">Desistiu</button>
+            </div>`).join('') : '<div class="linha-sub">Ninguém esperando encaixe.</div>'}
+        </div>
+
+        <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 12px">
+          <div class="rotulo-secao">Clientes sumidos (60+ dias)</div>
+          ${r.clientes_sumidos.length ? r.clientes_sumidos.map(c => `
+            <div class="linha linha-inset" style="padding: 10px 14px">
+              <div style="flex: 1">
+                <div class="linha-titulo" style="font-size: 0.9rem"><a href="#/cliente/${c.id}">${esc(c.nome)}</a></div>
+                <div class="linha-sub">${c.ultima_visita ? 'última visita ' + dataLonga(c.ultima_visita) : 'nunca veio'}</div>
+              </div>
+              ${c.telefone ? `<a class="btn-fantasma btn-mini" style="text-decoration: none" target="_blank" rel="noopener"
+                href="https://wa.me/${esc(numeroWhatsApp(c.telefone))}?text=${encodeURIComponent('Olá! Sentimos falta do seu pet por aqui. Quer agendar um horário?')}">Chamar</a>` : ''}
+            </div>`).join('') : '<div class="linha-sub">Nenhum cliente sumido.</div>'}
+          ${r.pacotes_a_vencer > 0 ? `<div class="faixa-aviso" style="margin-top: 6px">${r.pacotes_a_vencer} pacote(s) vencem no próximo mês — vale avisar os donos.</div>` : ''}
+        </div>
+      </div>`;
+
+    conteudo.querySelectorAll('[data-fila-ok]').forEach(b =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/extras/fila/${b.dataset.filaOk}`, { method: 'PUT', body: { status: 'ATENDIDO' } });
+          toast('Encaixe registrado.'); verRelatorios();
+        } catch (err) { toast(err.message, true); }
+      }));
+    conteudo.querySelectorAll('[data-fila-nao]').forEach(b =>
+      b.addEventListener('click', async () => {
+        try {
+          await api(`/extras/fila/${b.dataset.filaNao}`, { method: 'PUT', body: { status: 'DESISTIU' } });
+          toast('Retirado da fila.'); verRelatorios();
+        } catch (err) { toast(err.message, true); }
+      }));
+  }
+
+  function numeroWhatsApp(telefone) {
+    const limpo = String(telefone || '').replace(/\D/g, '');
+    if (!limpo) return '';
+    return limpo.length <= 11 ? '55' + limpo : limpo;
+  }
+
+  /**
+   * Reduz a foto no próprio navegador antes de enviar: 1200px no maior
+   * lado, JPEG 0.72. Uma foto de celular de 4 MB vira ~200 KB.
+   */
+  function reduzirImagem(arquivo) {
+    return new Promise((resolve, reject) => {
+      const leitor = new FileReader();
+      leitor.onerror = () => reject(new Error('Não consegui ler a foto.'));
+      leitor.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Arquivo não é uma imagem válida.'));
+        img.onload = () => {
+          const maior = Math.max(img.width, img.height);
+          const escala = maior > 1200 ? 1200 / maior : 1;
+          const tela = document.createElement('canvas');
+          tela.width = Math.round(img.width * escala);
+          tela.height = Math.round(img.height * escala);
+          tela.getContext('2d').drawImage(img, 0, 0, tela.width, tela.height);
+          const dados = tela.toDataURL('image/jpeg', 0.72);
+          if (dados.length > 700 * 1024) {
+            reject(new Error('Foto muito grande mesmo depois de reduzir. Tente outra.'));
+            return;
+          }
+          resolve(dados);
+        };
+        img.src = leitor.result;
+      };
+      leitor.readAsDataURL(arquivo);
+    });
+  }
+
   // ═══ Configurações ═══════════════════════════════════════════════
 
   const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -1365,8 +1766,53 @@
               <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
               <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
                 <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
+              <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+                <input type="checkbox" name="aceita_online" ${emp.aceita_online ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+                Deixar o cliente agendar e comprar pelo aplicativo
+              </label>
               <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar</button>
             </form>
+          </div>
+
+          <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
+            <form id="form-loja" style="display: flex; flex-direction: column; gap: 14px">
+              <div class="rotulo-secao">Loja e entrega</div>
+              <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
+                <input type="checkbox" name="vende_produtos" ${emp.vende_produtos ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
+                Vender produtos pelo aplicativo
+              </label>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+                <div class="campo"><label>Taxa de entrega (R$)</label>
+                  <input name="taxa" inputmode="decimal" value="${(emp.taxa_entrega_centavos / 100).toFixed(2).replace('.', ',')}"></div>
+                <div class="campo"><label>Entrega grátis acima de (R$)</label>
+                  <input name="gratis" inputmode="decimal" value="${emp.entrega_gratis_acima_centavos ? (emp.entrega_gratis_acima_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="deixe vazio para não ter"></div>
+              </div>
+              <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar loja</button>
+            </form>
+          </div>
+
+          <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
+            <div class="rotulo-secao">Pagamento online (Mercado Pago)</div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.55">
+              O dinheiro cai direto na conta do petshop. Pegue as credenciais em
+              <a href="https://www.mercadopago.com.br/developers/panel/app" target="_blank" rel="noopener">mercadopago.com.br/developers</a>:
+              o <strong>access token de produção</strong> e, em Webhooks, a <strong>chave secreta</strong>.
+            </p>
+            <div class="campo"><label>URL para colar no painel do Mercado Pago</label>
+              <input id="campo-webhook-url" readonly value="${esc(emp.url_webhook)}"></div>
+            <div class="campo"><label>Access token ${emp.mp_access_token_final ? `(salvo: ${esc(emp.mp_access_token_final)})` : '(não configurado)'}</label>
+              <input id="campo-mp-token" type="password" placeholder="APP_USR-…" autocomplete="off"></div>
+            <div class="campo"><label>Chave secreta do webhook ${emp.mp_webhook_configurado ? '(configurada)' : '(não configurada)'}</label>
+              <input id="campo-mp-segredo" type="password" placeholder="cole a chave secreta" autocomplete="off"></div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap">
+              <button class="btn-primario" id="botao-salvar-mp" type="button">Salvar credenciais</button>
+              <button class="btn-fantasma" id="botao-ver-pagamentos" type="button">Ver pagamentos</button>
+            </div>
+            <div class="linha-sub">
+              ${emp.mp_access_token_final && emp.mp_webhook_configurado
+                ? 'Pagamento online ativo: os clientes já podem comprar pacotes pelo aplicativo.'
+                : 'Enquanto faltar alguma credencial, o botão de comprar não aparece para o cliente.'}
+            </div>
           </div>
 
           <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px">
@@ -1457,10 +1903,73 @@
       ev.preventDefault();
       const f = new FormData(ev.target);
       try {
-        await api('/empresa', { method: 'PUT', body: { nome: f.get('nome'), whatsapp: f.get('whatsapp') } });
+        await api('/empresa', { method: 'PUT', body: {
+          nome: f.get('nome'), whatsapp: f.get('whatsapp'),
+          aceita_online: f.get('aceita_online') === 'on',
+        }});
         toast('Dados salvos.');
         await carregarSessao();
         document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
+      } catch (err) { toast(err.message, true); }
+    });
+
+    // Loja e entrega
+    document.getElementById('form-loja').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const taxa = String(f.get('taxa') || '').trim() ? paraCentavos(f.get('taxa')) : 0;
+      const gratisTexto = String(f.get('gratis') || '').trim();
+      const gratis = gratisTexto ? paraCentavos(gratisTexto) : null;
+      if (!Number.isFinite(taxa) || (gratisTexto && !Number.isFinite(gratis))) {
+        toast('Valor inválido.', true); return;
+      }
+      try {
+        await api('/empresa', { method: 'PUT', body: {
+          nome: emp.nome, whatsapp: emp.whatsapp,
+          vende_produtos: f.get('vende_produtos') === 'on',
+          taxa_entrega_centavos: taxa,
+          entrega_gratis_acima_centavos: gratis,
+        }});
+        toast('Loja atualizada.'); verConfig();
+      } catch (err) { toast(err.message, true); }
+    });
+
+    // Credenciais do Mercado Pago
+    document.getElementById('botao-salvar-mp').addEventListener('click', async () => {
+      const token = document.getElementById('campo-mp-token').value.trim();
+      const segredo = document.getElementById('campo-mp-segredo').value.trim();
+      if (!token && !segredo) { toast('Preencha ao menos um campo.', true); return; }
+      const corpo = {};
+      if (token) corpo.mp_access_token = token;
+      if (segredo) corpo.mp_webhook_secret = segredo;
+      try {
+        await api('/empresa/pagamento', { method: 'PUT', body: corpo });
+        toast('Credenciais salvas com segurança.');
+        verConfig();
+      } catch (err) { toast(err.message, true); }
+    });
+
+    document.getElementById('botao-ver-pagamentos').addEventListener('click', async () => {
+      try {
+        const lista = await api('/empresa/pagamentos');
+        const SITUACAO = {
+          APROVADO: 'ok', PENDENTE: '', DIVERGENTE: 'alerta',
+          PENDENTE_MANUAL: 'alerta', ERRO: 'alerta',
+        };
+        abrirModal(`
+          <h3>Pagamentos online</h3>
+          ${lista.length ? `<div class="lista" style="gap: 8px">${lista.map(p => `
+            <div class="linha linha-inset" style="padding: 10px 14px">
+              <div class="linha-data" style="font-size: 1rem">${dataCurta(p.criado_em)}</div>
+              <div style="flex: 1">
+                <div class="linha-titulo" style="font-size: 0.9rem">${esc(p.cliente_nome)}</div>
+                <div class="linha-sub">${esc(p.pacote_nome || p.tipo)} · ${formatarReais(p.valor_centavos)}</div>
+              </div>
+              <span class="chip ${SITUACAO[p.status] || ''}">${esc(p.status)}</span>
+            </div>`).join('')}</div>`
+            : '<div class="vazio">Nenhum pagamento online ainda.</div>'}
+          <div style="display: flex; justify-content: flex-end"><button class="btn-fantasma" data-fechar type="button">Fechar</button></div>`);
+        ligarFechar(document.querySelector('.modal'));
       } catch (err) { toast(err.message, true); }
     });
 
@@ -1639,7 +2148,9 @@
       if (rota === 'agenda') await verAgenda(parametro);
       else if (rota === 'clientes') await verClientes();
       else if (rota === 'cliente' && parametro) await verFicha(parseInt(parametro, 10));
+      else if (rota === 'loja') await verLoja();
       else if (rota === 'catalogo') await verCatalogo();
+      else if (rota === 'relatorios') await verRelatorios();
       else if (rota === 'config') await verConfig();
       else await verVisao();
     } catch (err) {

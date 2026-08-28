@@ -5,51 +5,13 @@ const { executeQuery, comTransacao } = require('../database');
 const { somenteAdmin } = require('../middlewares/autenticacao');
 const { hojeSaoPaulo } = require('../util/datas');
 const { consumirUmCredito } = require('../util/creditos');
+const { paraMinutos } = require('../util/agenda');
 const {
-  paraMinutos, paraHHMM, horariosLivres, escolherRecurso,
-  primeiroEncaixe, diaDaSemana, agoraHHMMSaoPaulo,
-} = require('../util/agenda');
+  contextoDoDia, calcularHorariosLivres, criarAgendamento,
+  erroNegocio, HHMM_RE, DATA_RE,
+} = require('../util/agendamentos');
 
 const router = express.Router();
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function erroNegocio(mensagem, statusHttp) {
-  return Object.assign(new Error(mensagem), { statusHttp });
-}
-
-// ─── Contexto do dia (períodos, recursos, ocupações) ───────────────
-// `q` pode ser o executeQuery global (leitura) ou o query da transação.
-
-async function contextoDoDia(q, empresaId, data) {
-  const dia = diaDaSemana(data);
-
-  const [horarios, excecoes, recursos, ocupados, empresa] = await Promise.all([
-    q('SELECT inicio, fim FROM agenda_horarios WHERE empresa_id = $1 AND dia_semana = $2 ORDER BY inicio',
-      [empresaId, dia]),
-    q('SELECT id FROM agenda_excecoes WHERE empresa_id = $1 AND data = $2', [empresaId, data]),
-    q(`SELECT id, nome, tipo FROM recursos WHERE empresa_id = $1 AND ativo ORDER BY tipo, id`,
-      [empresaId]),
-    q(`SELECT recurso_id, inicio, fim FROM agendamentos
-        WHERE empresa_id = $1 AND data = $2 AND status IN ('AGENDADO', 'CONCLUIDO')`,
-      [empresaId, data]),
-    q('SELECT tempo_deslocamento_minutos, intervalo_grade_minutos FROM empresas WHERE id = $1',
-      [empresaId]),
-  ]);
-
-  const fechado = excecoes.recordset.length > 0;
-  return {
-    periodos: fechado ? [] : horarios.recordset,
-    fechado,
-    atendimento: recursos.recordset.filter(r => r.tipo === 'ATENDIMENTO').map(r => r.id),
-    veiculos: recursos.recordset.filter(r => r.tipo === 'VEICULO').map(r => r.id),
-    recursos: recursos.recordset,
-    ocupacoes: ocupados.recordset,
-    desloc: empresa.recordset[0].tempo_deslocamento_minutos,
-    passo: empresa.recordset[0].intervalo_grade_minutos,
-  };
-}
 
 // ─── Configuração ──────────────────────────────────────────────────
 
@@ -221,7 +183,7 @@ router.get('/dia', async (req, res, next) => {
     const [ctx, ags, todosRecursos] = await Promise.all([
       contextoDoDia(executeQuery, empresaId, data),
       executeQuery(
-        `SELECT a.id, a.tipo, a.data, a.inicio, a.fim, a.status, a.observacao,
+        `SELECT a.id, a.tipo, a.data, a.inicio, a.fim, a.status, a.observacao, a.origem,
                 a.recurso_id, a.agendamento_pai_id, a.cliente_id, a.pet_id, a.servico_id,
                 c.nome AS cliente_nome, p.nome AS pet_nome, s.nome AS servico_nome
            FROM agendamentos a
@@ -260,33 +222,17 @@ router.get('/horarios-livres', async (req, res, next) => {
   try {
     const data = String(req.query.data || '');
     const servicoId = parseInt(req.query.servico_id, 10);
-    const levaTraz = String(req.query.leva_traz) === 'true';
     if (!DATA_RE.test(data) || !Number.isInteger(servicoId)) {
       return res.status(400).json({ erro: 'Informe data e serviço.' });
     }
-    if (data < hojeSaoPaulo()) return res.json({ horarios: [] });
-
-    const empresaId = req.usuario.empresa_id;
-    const rs = await executeQuery(
-      'SELECT duracao_minutos FROM servicos WHERE id = $1 AND empresa_id = $2 AND ativo',
-      [servicoId, empresaId]
-    );
-    if (!rs.recordset.length) return res.status(404).json({ erro: 'Serviço não encontrado.' });
-
-    const ctx = await contextoDoDia(executeQuery, empresaId, data);
-    const horarios = horariosLivres({
-      periodos: ctx.periodos,
-      recursos: ctx.atendimento,
-      veiculos: ctx.veiculos,
-      ocupacoes: ctx.ocupacoes,
-      duracao: rs.recordset[0].duracao_minutos,
-      passo: ctx.passo,
-      levaTraz,
-      desloc: ctx.desloc,
-      minimoInicio: data === hojeSaoPaulo() ? agoraHHMMSaoPaulo() : null,
+    const resultado = await calcularHorariosLivres(executeQuery, {
+      empresaId: req.usuario.empresa_id,
+      data, servicoId,
+      levaTraz: String(req.query.leva_traz) === 'true',
     });
-    res.json({ horarios, leva_traz_disponivel: ctx.veiculos.length > 0 });
+    res.json(resultado);
   } catch (err) {
+    if (err.statusHttp) return res.status(err.statusHttp).json({ erro: err.message });
     next(err);
   }
 });
@@ -296,117 +242,24 @@ router.get('/horarios-livres', async (req, res, next) => {
 router.post('/agendamentos', async (req, res, next) => {
   try {
     const { cliente_id, pet_id, servico_id, data, inicio, leva_traz, observacao } = req.body || {};
-    const clienteId = parseInt(cliente_id, 10);
-    const servicoId = parseInt(servico_id, 10);
-    const petId = pet_id === null || pet_id === undefined || pet_id === '' ? null : parseInt(pet_id, 10);
-    const levaTraz = leva_traz === true;
-
-    if (!Number.isInteger(clienteId) || !Number.isInteger(servicoId) ||
-        !DATA_RE.test(String(data)) || !HHMM_RE.test(String(inicio)) ||
-        (petId !== null && !Number.isInteger(petId))) {
-      return res.status(400).json({ erro: 'Dados do agendamento inválidos.' });
-    }
-    if (data < hojeSaoPaulo()) {
-      return res.status(400).json({ erro: 'Não é possível agendar no passado.' });
-    }
-
     const empresaId = req.usuario.empresa_id;
+
     const resultado = await comTransacao(async (query) => {
       // Trava por empresa: serializa criações e impede agendamento duplo
       // no mesmo horário por duas atendentes ao mesmo tempo.
       await query('SELECT id FROM empresas WHERE id = $1 FOR UPDATE', [empresaId]);
-
-      const rc = await query(
-        'SELECT id FROM clientes WHERE id = $1 AND empresa_id = $2 AND ativo',
-        [clienteId, empresaId]);
-      if (!rc.recordset.length) throw erroNegocio('Cliente não encontrado.', 404);
-
-      if (petId !== null) {
-        const rp = await query(
-          'SELECT id FROM pets WHERE id = $1 AND empresa_id = $2 AND cliente_id = $3 AND ativo',
-          [petId, empresaId, clienteId]);
-        if (!rp.recordset.length) throw erroNegocio('Pet não pertence a este cliente.', 400);
-      }
-
-      const rs = await query(
-        'SELECT nome, duracao_minutos FROM servicos WHERE id = $1 AND empresa_id = $2 AND ativo',
-        [servicoId, empresaId]);
-      if (!rs.recordset.length) throw erroNegocio('Serviço não encontrado.', 404);
-      const duracao = rs.recordset[0].duracao_minutos;
-
-      const ctx = await contextoDoDia(query, empresaId, data);
-      if (ctx.fechado || !ctx.periodos.length) {
-        throw erroNegocio('O petshop não abre neste dia.', 409);
-      }
-      if (levaTraz && !ctx.veiculos.length) {
-        throw erroNegocio('Nenhum veículo cadastrado para leva-e-traz.', 409);
-      }
-
-      // O horário pedido precisa estar entre os livres calculados AGORA
-      // (dentro da trava): se outra atendente acabou de ocupar, cai aqui.
-      const livres = horariosLivres({
-        periodos: ctx.periodos, recursos: ctx.atendimento, veiculos: ctx.veiculos,
-        ocupacoes: ctx.ocupacoes, duracao, passo: ctx.passo,
-        levaTraz, desloc: ctx.desloc,
-        minimoInicio: data === hojeSaoPaulo() ? agoraHHMMSaoPaulo() : null,
+      return criarAgendamento(query, {
+        empresaId,
+        clienteId: parseInt(cliente_id, 10),
+        petId: pet_id === null || pet_id === undefined || pet_id === '' ? null : parseInt(pet_id, 10),
+        servicoId: parseInt(servico_id, 10),
+        data: String(data),
+        inicio: String(inicio),
+        levaTraz: leva_traz === true,
+        observacao,
+        usuarioId: req.usuario.id,
+        origem: 'PETSHOP',
       });
-      if (!livres.includes(inicio)) {
-        throw erroNegocio('Este horário acabou de ficar indisponível. Escolha outro.', 409);
-      }
-
-      const fim = paraHHMM(paraMinutos(inicio) + duracao);
-      const recursoId = escolherRecurso(ctx.atendimento, ctx.ocupacoes, inicio, fim);
-
-      const ra = await query(
-        `INSERT INTO agendamentos (empresa_id, cliente_id, pet_id, servico_id, recurso_id,
-                                   tipo, data, inicio, fim, observacao, criado_por)
-         VALUES ($1, $2, $3, $4, $5, 'SERVICO', $6, $7, $8, $9, $10)
-         RETURNING id, data, inicio, fim, recurso_id`,
-        [empresaId, clienteId, petId, servicoId, recursoId, data, inicio, fim,
-         String(observacao || '').trim() || null, req.usuario.id]
-      );
-      const principal = ra.recordset[0];
-      let busca = null;
-      let entrega = null;
-      let avisoEntrega = null;
-
-      if (levaTraz) {
-        const iniBusca = paraHHMM(paraMinutos(inicio) - ctx.desloc);
-        const veiculoBusca = escolherRecurso(ctx.veiculos, ctx.ocupacoes, iniBusca, inicio);
-        const rb = await query(
-          `INSERT INTO agendamentos (empresa_id, cliente_id, pet_id, servico_id, recurso_id,
-                                     tipo, agendamento_pai_id, data, inicio, fim, criado_por)
-           VALUES ($1, $2, $3, $4, $5, 'BUSCA', $6, $7, $8, $9, $10)
-           RETURNING id, inicio, fim`,
-          [empresaId, clienteId, petId, servicoId, veiculoBusca, principal.id,
-           data, iniBusca, inicio, req.usuario.id]
-        );
-        busca = rb.recordset[0];
-
-        // Entrega: primeiro encaixe do veículo a partir do fim do serviço.
-        const ocupacoesComBusca = ctx.ocupacoes.concat([
-          { recurso_id: veiculoBusca, inicio: iniBusca, fim: inicio },
-        ]);
-        const encaixe = primeiroEncaixe({
-          periodos: ctx.periodos, recursos: ctx.veiculos,
-          ocupacoes: ocupacoesComBusca, aPartirDe: fim, duracao: ctx.desloc,
-        });
-        if (encaixe) {
-          const re = await query(
-            `INSERT INTO agendamentos (empresa_id, cliente_id, pet_id, servico_id, recurso_id,
-                                       tipo, agendamento_pai_id, data, inicio, fim, criado_por)
-             VALUES ($1, $2, $3, $4, $5, 'ENTREGA', $6, $7, $8, $9, $10)
-             RETURNING id, inicio, fim`,
-            [empresaId, clienteId, petId, servicoId, encaixe.recurso_id, principal.id,
-             data, encaixe.inicio, encaixe.fim, req.usuario.id]
-          );
-          entrega = re.recordset[0];
-        } else {
-          avisoEntrega = 'Sem janela livre do veículo para a entrega — combinar manualmente.';
-        }
-      }
-
-      return { agendamento: principal, busca, entrega, aviso_entrega: avisoEntrega };
     });
 
     res.status(201).json(resultado);

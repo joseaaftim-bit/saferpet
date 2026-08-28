@@ -27,6 +27,7 @@ app.get('/api/health', async (_req, res) => {
 // ─── API ───────────────────────────────────────────────────────────
 app.use('/api/auth', require('./rotas/auth'));
 app.use('/api/portal', require('./rotas/portal'));
+app.use('/api/pagamentos', require('./rotas/pagamentos'));
 app.use('/api/hub', require('./rotas/hub'));
 
 // Rotas de negócio: autenticado + acesso do petshop vigente.
@@ -37,6 +38,8 @@ app.use('/api/servicos', protegido, require('./rotas/servicos'));
 app.use('/api/pacotes', protegido, require('./rotas/pacotes'));
 app.use('/api/baixas', protegido, require('./rotas/baixas'));
 app.use('/api/agenda', protegido, require('./rotas/agenda'));
+app.use('/api/loja', protegido, require('./rotas/loja'));
+app.use('/api/extras', protegido, require('./rotas/extras'));
 app.use('/api/dashboard', protegido, require('./rotas/dashboard'));
 app.use('/api/empresa', protegido, require('./rotas/empresa'));
 
