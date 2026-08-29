@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SaferPet — entrar</title>
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="pagina-login">
+    <div class="cartao cartao-login">
+      <div class="marca" style="justify-content: center">
+        <div class="marca-icone" style="width: 44px; height: 44px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
+        </div>
+        <div>
+          <div class="marca-nome">SaferPet</div>
+          <div class="marca-empresa">Controle de pacotes de banho</div>
+        </div>
+      </div>
+
+      <div class="abas" style="width: 100%; justify-content: center">
+        <button class="aba ativa" id="aba-entrar" type="button">Entrar</button>
+        <button class="aba" id="aba-criar" type="button">Criar conta do petshop</button>
+      </div>
+
+      <form id="form-entrar" style="display: flex; flex-direction: column; gap: 14px">
+        <div class="campo">
+          <label for="login-email">E-mail</label>
+          <input id="login-email" type="email" autocomplete="username" required>
+        </div>
+        <div class="campo">
+          <label for="login-senha">Senha</label>
+          <input id="login-senha" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn-primario" type="submit">Entrar</button>
+      </form>
+
+      <form id="form-criar" style="display: none; flex-direction: column; gap: 14px">
+        <div class="campo">
+          <label for="criar-empresa">Nome do petshop</label>
+          <input id="criar-empresa" type="text" required>
+        </div>
+        <div class="campo">
+          <label for="criar-whatsapp">WhatsApp do petshop (com DDD)</label>
+          <input id="criar-whatsapp" type="tel" placeholder="67999999999">
+        </div>
+        <div class="campo">
+          <label for="criar-nome">Seu nome</label>
+          <input id="criar-nome" type="text" required>
+        </div>
+        <div class="campo">
+          <label for="criar-email">E-mail</label>
+          <input id="criar-email" type="email" autocomplete="username" required>
+        </div>
+        <div class="campo">
+          <label for="criar-senha">Senha (mínimo 8 caracteres)</label>
+          <input id="criar-senha" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <button class="btn-primario" type="submit">Criar conta</button>
+      </form>
+
+      <div id="mensagem" style="display: none" class="faixa-aviso"></div>
+    </div>
+  </div>
+  <script src="/js/login.js"></script>
+</body>
+</html>

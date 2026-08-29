@@ -3,66 +3,411 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SaferPet — entrar</title>
-  <link rel="stylesheet" href="/estilo.css">
+  <title>SaferPet — o petshop inteiro fora do caderno</title>
+  <meta name="description" content="Pacotes de banho, agenda, leva-e-traz e loja do seu petshop em um só lugar — e um aplicativo para o seu cliente acompanhar tudo, sem instalar nada. 14 dias grátis.">
+  <meta property="og:title" content="SaferPet — o petshop inteiro fora do caderno">
+  <meta property="og:description" content="Pacotes de banho, agenda, leva-e-traz e loja em um só lugar. O seu cliente acompanha tudo pelo celular. 14 dias grátis, sem cartão.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://pet.safersoftware.com.br">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&family=Caveat:wght@500;600&display=swap">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta property="og:image" content="https://pet.safersoftware.com.br/img/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <link rel="stylesheet" href="/css/landing.css">
+  <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
-  <div class="pagina-login">
-    <div class="cartao cartao-login">
-      <div class="marca" style="justify-content: center">
-        <div class="marca-icone" style="width: 44px; height: 44px">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
-        </div>
-        <div>
-          <div class="marca-nome">SaferPet</div>
-          <div class="marca-empresa">Controle de pacotes de banho</div>
-        </div>
-      </div>
 
-      <div class="abas" style="width: 100%; justify-content: center">
-        <button class="aba ativa" id="aba-entrar" type="button">Entrar</button>
-        <button class="aba" id="aba-criar" type="button">Criar conta do petshop</button>
-      </div>
-
-      <form id="form-entrar" style="display: flex; flex-direction: column; gap: 14px">
-        <div class="campo">
-          <label for="login-email">E-mail</label>
-          <input id="login-email" type="email" autocomplete="username" required>
-        </div>
-        <div class="campo">
-          <label for="login-senha">Senha</label>
-          <input id="login-senha" type="password" autocomplete="current-password" required>
-        </div>
-        <button class="btn-primario" type="submit">Entrar</button>
-      </form>
-
-      <form id="form-criar" style="display: none; flex-direction: column; gap: 14px">
-        <div class="campo">
-          <label for="criar-empresa">Nome do petshop</label>
-          <input id="criar-empresa" type="text" required>
-        </div>
-        <div class="campo">
-          <label for="criar-whatsapp">WhatsApp do petshop (com DDD)</label>
-          <input id="criar-whatsapp" type="tel" placeholder="67999999999">
-        </div>
-        <div class="campo">
-          <label for="criar-nome">Seu nome</label>
-          <input id="criar-nome" type="text" required>
-        </div>
-        <div class="campo">
-          <label for="criar-email">E-mail</label>
-          <input id="criar-email" type="email" autocomplete="username" required>
-        </div>
-        <div class="campo">
-          <label for="criar-senha">Senha (mínimo 8 caracteres)</label>
-          <input id="criar-senha" type="password" autocomplete="new-password" minlength="8" required>
-        </div>
-        <button class="btn-primario" type="submit">Criar conta</button>
-      </form>
-
-      <div id="mensagem" style="display: none" class="faixa-aviso"></div>
-    </div>
+<header class="topo-landing" id="topo">
+  <a class="marca-landing" href="#" aria-label="SaferPet — início">
+    <span class="marca-selo">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
+    </span>
+    <span class="marca-texto">SaferPet</span>
+  </a>
+  <nav class="topo-nav" aria-label="Principal">
+    <a href="#funciona">Como funciona</a>
+    <a href="#recursos">Recursos</a>
+    <a href="#preco">Preço</a>
+  </nav>
+  <div class="topo-acoes">
+    <a class="botao botao-quieto" href="/entrar">Entrar</a>
+    <a class="botao botao-cheio" href="/entrar#criar">Criar conta grátis</a>
   </div>
-  <script src="/js/login.js"></script>
+</header>
+
+<main>
+
+  <!-- ══ Hero: o caderno se aposenta ══ -->
+  <section class="hero">
+    <div class="hero-texto">
+      <p class="olho">Para petshops que vendem pacotes de banho</p>
+      <h1>O caderno de pacotes fez o que pôde.<br><em>Agora deixa com a gente.</em></h1>
+      <p class="hero-sub">
+        O SaferPet controla os pacotes, a agenda e o leva-e-traz do seu petshop —
+        e entrega ao seu cliente um aplicativo para acompanhar o saldo, marcar horário
+        e comprar de casa. Sem instalar nada.
+      </p>
+      <div class="hero-ctas">
+        <a class="botao botao-cheio botao-grande" href="/entrar#criar">Criar conta grátis</a>
+        <a class="botao botao-quieto botao-grande" href="#funciona">Ver como funciona</a>
+      </div>
+      <p class="hero-nota">14 dias grátis &middot; sem cartão de crédito &middot; cancele quando quiser</p>
+    </div>
+
+    <div class="hero-cena" aria-hidden="true">
+      <!-- O caderno de verdade: pauta, espiral, caneta e rasura -->
+      <div class="caderno">
+        <div class="caderno-espiral">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="caderno-pagina">
+          <p class="caderno-titulo">PACOTES — AGOSTO</p>
+          <div class="caderno-linha">
+            <span class="tinta">Rex (d. Marta) — 24 banhos</span>
+            <span class="caderno-riscos">
+              <svg viewBox="0 0 150 22" class="riscos-svg"><path class="risco" d="M4 16 L10 5 M8 15 L16 6"/><path class="risco" d="M22 16 L28 5 M26 15 L34 6"/><path class="risco" d="M40 16 L46 5 M44 15 L52 6"/><path class="risco" d="M58 16 L64 5 M62 15 L70 6"/><path class="risco" d="M76 16 L82 5 M80 15 L88 6"/><path class="risco risco-meio" d="M94 16 L100 5"/></svg>
+            </span>
+          </div>
+          <div class="caderno-linha">
+            <span class="tinta">Luna — 12 b. + 2 tosa</span>
+            <span class="tinta-fraca">pagou? conferir c/ Ju</span>
+          </div>
+          <div class="caderno-linha">
+            <span class="tinta tinta-rasurada">Thor — 24 banhos</span>
+            <span class="tinta-fraca">virou p&aacute;g. 14…</span>
+          </div>
+          <div class="caderno-linha">
+            <span class="tinta-fraca caderno-duvida">faltam quantos??</span>
+          </div>
+          <div class="caderno-mancha"></div>
+        </div>
+      </div>
+
+      <div class="cena-seta">
+        <svg viewBox="0 0 64 40" aria-hidden="true"><path d="M4 20 C 22 6, 42 6, 56 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="1 7"/><path d="M48 10 L57 19 L45 21" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+
+      <!-- O mesmo pacote, dentro do app -->
+      <div class="cartao-app">
+        <div class="cartao-app-topo">
+          <span class="cartao-app-rotulo">Seu saldo</span>
+          <span class="chip-demo chip-ok">Em dia</span>
+        </div>
+        <div class="cartao-app-numero"><strong data-contador="17">17</strong><span>/ 24 banhos</span></div>
+        <div class="barra-demo"><div class="barra-demo-cheia" style="--alvo: 71%"></div></div>
+        <div class="cartao-app-sub">Rex &middot; Pacote 24 banhos &middot; válido até mar/2027</div>
+        <div class="cartao-app-botoes">
+          <span class="botao-demo botao-demo-cheio">Agendar banho</span>
+          <span class="botao-demo">Ver histórico</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ As dores ══ -->
+  <section class="dores">
+    <div class="dores-grade">
+      <div class="dor">
+        <p class="dor-titulo">"Quantos banhos ainda tenho?"</p>
+        <p>O cliente liga, alguém larga o secador, procura a página certa e conta
+           risquinho por risquinho. Toda semana.</p>
+      </div>
+      <div class="dor">
+        <p class="dor-titulo">O caderno borra, molha, some</p>
+        <p>Um borrão de café na página errada e ninguém mais sabe se o pacote do Thor
+           tem 3 banhos ou 8. E quem paga a diferença é você.</p>
+      </div>
+      <div class="dor">
+        <p class="dor-titulo">O banho que ninguém marcou</p>
+        <p>Encaixe por telefone, horário anotado num post-it, dois cachorros
+           na mesma banheira às 14h. A agenda vira quebra-cabeça.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Como funciona ══ -->
+  <section class="funciona" id="funciona">
+    <div class="secao-cabeca">
+      <p class="olho">Como funciona</p>
+      <h2>Pronto para usar no mesmo dia</h2>
+    </div>
+    <div class="passos">
+      <div class="passo">
+        <span class="passo-numero">1</span>
+        <h3>Cadastre os serviços e monte os pacotes</h3>
+        <p>Banho, tosa, hidratação — cada um com a duração real. Depois monte os pacotes
+           que você já vende no papel: 24 banhos por R$ 700, por exemplo.</p>
+      </div>
+      <div class="passo">
+        <span class="passo-numero">2</span>
+        <h3>Registre no balcão ou deixe a agenda trabalhar</h3>
+        <p>No balcão, um toque dá a baixa. Pela agenda, concluir o banho já desconta do
+           pacote certo. Nos dois casos, o saldo nunca mais depende de contar risquinho.</p>
+      </div>
+      <div class="passo">
+        <span class="passo-numero">3</span>
+        <h3>Mande o endereço da sua página aos clientes</h3>
+        <p>Seu petshop ganha uma página própria na internet. O cliente cria a conta,
+           cadastra os pets e passa a agendar e comprar sozinho.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ O painel: agenda por duração ══ -->
+  <section class="vitrine-produto-secao">
+    <div class="produto-par">
+      <div class="produto-texto">
+        <p class="olho">O seu lado do balcão</p>
+        <h2>Uma agenda que entende de banho e tosa</h2>
+        <p>Cada serviço tem a própria duração — um banho de 1h ocupa 1h, uma tosa de 2h
+           ocupa 2h. O horário que aparece para o cliente é um horário que existe de verdade.</p>
+        <ul class="lista-checks">
+          <li>O carro do leva-e-traz tem horário próprio na agenda: duas buscas nunca caem na mesma hora</li>
+          <li>Concluiu o serviço, o crédito baixa do pacote na hora</li>
+          <li>Cliente sem crédito? O sistema avisa para cobrar no balcão</li>
+        </ul>
+      </div>
+      <div class="produto-demo revela" aria-hidden="true">
+        <div class="janela-demo">
+          <div class="janela-demo-topo"><i></i><i></i><i></i><span>SaferPet — Agenda</span></div>
+          <div class="agenda-demo">
+            <div class="agenda-demo-horas"><span>08h</span><span>09h</span><span>10h</span><span>11h</span><span>12h</span></div>
+            <div class="agenda-demo-coluna">
+              <p class="agenda-demo-cab">Banho e tosa</p>
+              <div class="bloco-demo" style="--ini: 0; --dur: 2">Rex <small>Banho · 1h</small></div>
+              <div class="bloco-demo bloco-demo-longo" style="--ini: 2; --dur: 4">Luna <small>Banho e tosa · 2h</small></div>
+              <div class="bloco-demo bloco-demo-ok" style="--ini: 6; --dur: 1">Mel <small>Tosa higiênica</small></div>
+            </div>
+            <div class="agenda-demo-coluna">
+              <p class="agenda-demo-cab">Leva-e-traz</p>
+              <div class="bloco-demo bloco-demo-rota" style="--ini: 1; --dur: 1">Buscar Luna</div>
+              <div class="bloco-demo bloco-demo-rota" style="--ini: 6; --dur: 1">Entregar Rex</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ O celular do cliente ══ -->
+  <section class="vitrine-produto-secao secao-tingida">
+    <div class="produto-par produto-par-invertido">
+      <div class="produto-texto">
+        <p class="olho">O lado do seu cliente</p>
+        <h2>Um aplicativo que ele abre sem instalar nada</h2>
+        <p>O dono do pet acompanha o saldo, marca horário, compra o próximo pacote e
+           recebe a foto do pet prontinho — tudo pelo navegador do celular.</p>
+        <ul class="lista-checks">
+          <li>Sem aplicativo para baixar, sem senha para quem usa o link</li>
+          <li>Seu petshop ganha um endereço próprio: pet.safersoftware.com.br/<strong>seupetshop</strong></li>
+          <li>Quem já era cliente do caderno entra só com a sua confirmação — ninguém assume o pacote de outra pessoa</li>
+        </ul>
+      </div>
+      <div class="produto-demo revela" aria-hidden="true">
+        <div class="fone-demo">
+          <div class="fone-demo-tela">
+            <div class="fone-demo-cab">
+              <span class="fone-demo-logo">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
+              </span>
+              <div><strong>Salva Patas</strong><small>Olá, Marta</small></div>
+            </div>
+            <div class="fone-demo-cartao">
+              <div class="fone-demo-saldo-rotulo">Seu saldo <span class="chip-demo chip-ok">Em dia</span></div>
+              <div class="fone-demo-saldo">17</div>
+              <div class="barra-demo"><div class="barra-demo-cheia" style="--alvo: 71%"></div></div>
+              <small>de 24 banhos &middot; Rex</small>
+            </div>
+            <span class="botao-demo botao-demo-cheio">Agendar horário</span>
+            <span class="botao-demo">Comprar novo pacote</span>
+            <div class="fone-demo-foto">
+              <span class="fone-demo-foto-icone">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="14" rx="2.5"/><circle cx="12" cy="13" r="3.6"/><path d="M8.5 6 L10 3.5 h4 L15.5 6"/></svg>
+              </span>
+              <div><strong>Rex ficou pronto!</strong><small>foto enviada às 15:40</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Recursos ══ -->
+  <section class="recursos" id="recursos">
+    <div class="secao-cabeca">
+      <p class="olho">Tudo incluído</p>
+      <h2>Um petshop inteiro, não só o caderno</h2>
+    </div>
+    <div class="recursos-grade">
+      <div class="recurso">
+        <span class="recurso-icone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8.5 L7 4h10l2 4.5"/><rect x="4" y="8.5" width="16" height="12" rx="2"/><path d="M9.5 12.5a2.5 2.5 0 0 0 5 0"/></svg></span>
+        <h3>Loja com entrega</h3>
+        <p>Ração, shampoo e acessórios no aplicativo do cliente — a entrega pega carona
+           na rota do leva-e-traz.</p>
+      </div>
+      <div class="recurso">
+        <span class="recurso-icone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18"/><path d="M7 15h4"/></svg></span>
+        <h3>Pagamento online</h3>
+        <p>Pacote e loja pagos pelo Mercado Pago — o dinheiro cai direto na sua conta,
+           não na nossa. Sem taxa sobre venda.</p>
+      </div>
+      <div class="recurso">
+        <span class="recurso-icone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5c-4 0-7 2.5-7 6.5s3 8.5 7 8.5 7-4.5 7-8.5-3-6.5-7-6.5Z"/><path d="M12 8.5v4l2.5 1.5"/></svg></span>
+        <h3>Carteirinha de vacinas</h3>
+        <p>As vacinas de cada pet com a data do reforço, na palma da mão do dono.</p>
+      </div>
+      <div class="recurso">
+        <span class="recurso-icone"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V13M10 19.5V8M16 19.5v-4.5M21 19.5H3"/><path d="M4 9.5 L10 4.5 L15 8.5 L21 4.5"/></svg></span>
+        <h3>Relatórios do mês</h3>
+        <p>Quanto entrou, pacotes vencendo, quem está sumido — sem planilha.</p>
+      </div>
+    </div>
+    <p class="recursos-resumo">E tudo o que você já viu acima: pacotes de qualquer
+       serviço, agenda por duração, leva-e-traz com carro na agenda e a foto do pet
+       pronto no celular do dono.</p>
+  </section>
+
+  <!-- ══ A história ══ -->
+  <section class="historia">
+    <div class="historia-caixa">
+      <div class="historia-ilustra" aria-hidden="true">
+        <svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- cachorro de toalha, recém-saído do banho -->
+          <path d="M38 74c-3-12 2-30 22-30s25 18 22 30"/>
+          <path d="M36 46c-4-6-3-14 2-17 4 5 5 9 5 13"/>
+          <path d="M84 46c4-6 3-14-2-17-4 5-5 9-5 13"/>
+          <circle cx="52" cy="58" r="2.6" fill="currentColor" stroke="none"/>
+          <circle cx="68" cy="58" r="2.6" fill="currentColor" stroke="none"/>
+          <path d="M56 67c2 2.5 6 2.5 8 0"/><path d="M60 62.5v4"/>
+          <ellipse cx="60" cy="62" rx="3.4" ry="2.6" fill="currentColor" stroke="none" opacity="0.9"/>
+          <!-- toalha enrolada -->
+          <path d="M34 74h52c3 0 5 2 5 5v14c0 3-2 5-5 5H34c-3 0-5-2-5-5V79c0-3 2-5 5-5Z" opacity="0.55"/>
+          <path d="M29 84h62M29 91h62" opacity="0.35"/>
+          <!-- bolhas de sabão -->
+          <circle cx="26" cy="34" r="4" opacity="0.4"/><circle cx="96" cy="28" r="3" opacity="0.35"/><circle cx="90" cy="40" r="2" opacity="0.3"/><circle cx="20" cy="24" r="2.4" opacity="0.3"/>
+        </svg>
+      </div>
+      <div class="historia-texto">
+        <p class="olho">De onde ele veio</p>
+        <h2>Nasceu dentro de um petshop de verdade</h2>
+        <p>O SaferPet começou num caderno de espiral em Campo Grande: 24 banhos, R$ 700,
+           uma fileira de risquinhos a caneta e a pergunta de sempre no balcão —
+           <em>"quantos ainda tenho?"</em>. Construímos o sistema para resolver esse caderno,
+           banho a banho, junto com quem dá o banho.</p>
+        <p>Não é um sistema genérico com um módulo "pet". É a rotina do petshop —
+           o pacote pré-pago, o encaixe, a busca e entrega, a foto no final — transformada
+           em software.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ Preço ══ -->
+  <section class="preco" id="preco">
+    <div class="secao-cabeca">
+      <p class="olho">Preço</p>
+      <h2>Um plano só. Tudo dentro.</h2>
+      <p class="secao-sub">Sem limite de clientes, de pacotes ou de agendamentos.
+         Sem taxa sobre as suas vendas.</p>
+    </div>
+    <div class="preco-cartoes">
+      <div class="preco-cartao">
+        <p class="preco-nome">Mensal</p>
+        <p class="preco-valor"><small>R$</small>149<span>/mês</span></p>
+        <ul class="lista-checks lista-checks-compacta">
+          <li>Todos os recursos, desde o primeiro dia</li>
+          <li>Aplicativo do cliente incluído</li>
+          <li>Página própria do petshop</li>
+        </ul>
+        <a class="botao botao-quieto botao-largo" href="/entrar#criar">Começar os 14 dias grátis</a>
+      </div>
+      <div class="preco-cartao preco-cartao-destaque">
+        <p class="preco-selo">2 meses grátis</p>
+        <p class="preco-nome">Anual</p>
+        <p class="preco-valor"><small>R$</small>1.490<span>/ano</span></p>
+        <ul class="lista-checks lista-checks-compacta">
+          <li>Tudo do mensal</li>
+          <li>Sai a R$ 124,17 por mês</li>
+          <li>Um preço só o ano inteiro</li>
+        </ul>
+        <a class="botao botao-cheio botao-largo" href="/entrar#criar">Começar os 14 dias grátis</a>
+      </div>
+    </div>
+    <p class="preco-rodape">Os 14 dias de teste não pedem cartão. Se não for para o seu
+       petshop, é só não continuar — sem ligação de retenção, sem letra miúda.</p>
+  </section>
+
+  <!-- ══ FAQ ══ -->
+  <section class="faq">
+    <div class="secao-cabeca">
+      <p class="olho">Dúvidas de balcão</p>
+      <h2>O que todo mundo pergunta</h2>
+    </div>
+    <div class="faq-lista">
+      <details class="faq-item">
+        <summary>Meu cliente vai precisar instalar alguma coisa?</summary>
+        <p>Não. O aplicativo do cliente abre no navegador do celular, por um link.
+           Quem você cadastra no balcão recebe um link direto, sem senha; quem chega
+           pela sua página cria a conta com telefone e senha. Os dois caminhos levam
+           ao mesmo lugar.</p>
+      </details>
+      <details class="faq-item">
+        <summary>E os pacotes que já estão no caderno?</summary>
+        <p>Você cadastra o cliente e lança o pacote dele com o saldo que restou — sem
+           cobrar nada de novo. O caderno se aposenta na hora, sem perder um risquinho
+           de histórico.</p>
+      </details>
+      <details class="faq-item">
+        <summary>O pagamento online cai na conta de quem?</summary>
+        <p>Na sua. O petshop conecta o próprio Mercado Pago e o dinheiro de pacotes e
+           da loja vai direto para a sua conta. O SaferPet não fica no meio do caminho
+           e não cobra taxa sobre venda.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Funciona no celular?</summary>
+        <p>Funciona — o painel do petshop e o aplicativo do cliente rodam no navegador
+           de qualquer celular ou computador, sem instalar nada.</p>
+      </details>
+      <details class="faq-item">
+        <summary>E se eu quiser sair?</summary>
+        <p>É só não renovar. Seus dados ficam guardados e tudo volta ao normal se você
+           voltar. Sem multa, sem fidelidade.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ══ CTA final ══ -->
+  <section class="final">
+    <div class="final-caixa">
+      <h2>O próximo pacote que você vender já pode nascer fora do caderno</h2>
+      <p>Criar a conta leva dois minutos. Colocar o petshop no ar, uns dez.</p>
+      <a class="botao botao-claro botao-grande" href="/entrar#criar">Criar conta grátis</a>
+      <p class="final-nota">14 dias grátis &middot; sem cartão de crédito</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="rodape-landing">
+  <div class="rodape-miolo">
+    <div class="rodape-marca">
+      <span class="marca-selo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="15.5" rx="4.2" ry="3.4"></ellipse><circle cx="6.2" cy="10.4" r="1.9"></circle><circle cx="10" cy="7.2" r="1.9"></circle><circle cx="14" cy="7.2" r="1.9"></circle><circle cx="17.8" cy="10.4" r="1.9"></circle></svg>
+      </span>
+      <span>SaferPet</span>
+    </div>
+    <p>Um produto <a href="https://www.safersoftware.com.br" target="_blank" rel="noopener">Safer Software</a> — feito no Brasil, dentro de um petshop.</p>
+    <nav class="rodape-nav" aria-label="Rodapé">
+      <a href="/entrar">Entrar</a>
+      <a href="/entrar#criar">Criar conta</a>
+      <a href="#preco">Preço</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/landing.js" defer></script>
 </body>
 </html>

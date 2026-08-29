@@ -92,7 +92,7 @@
 
   function sair() {
     localStorage.removeItem('saferpet_token');
-    window.location.href = '/';
+    window.location.href = '/entrar';
   }
 
   async function api(caminho, opcoes = {}) {
@@ -2999,7 +2999,7 @@
   window.addEventListener('hashchange', renderizar);
 
   if (!localStorage.getItem('saferpet_token')) {
-    window.location.href = '/';
+    window.location.href = '/entrar';
   } else {
     carregarSessao()
       .then(() => {

@@ -54,6 +54,7 @@ app.use('/api', (_req, res) => res.status(404).json({ erro: 'Rota não encontrad
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 app.use(express.static(PUBLIC_DIR));
 app.get('/app', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'app.html')));
+app.get('/entrar', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'entrar.html')));
 app.get('/portal/:token', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'portal.html')));
 // Endereço público do petshop: /salvapatas. Vem por último, depois dos
 // arquivos estáticos, para não engolir /js, /estilo.css e afins.

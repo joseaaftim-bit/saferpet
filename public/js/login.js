@@ -23,6 +23,9 @@
   abaEntrar.addEventListener('click', () => mostrarAba('entrar'));
   abaCriar.addEventListener('click', () => mostrarAba('criar'));
 
+  // A landing manda direto para a aba certa: /entrar#criar
+  if (window.location.hash === '#criar') mostrarAba('criar');
+
   function mostrarErro(texto) {
     mensagem.textContent = texto;
     mensagem.style.display = 'block';
