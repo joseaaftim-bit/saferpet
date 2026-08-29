@@ -9,7 +9,9 @@ const rateLimit = require('express-rate-limit');
 const { executeQuery, comTransacao } = require('../database');
 const { hojeSaoPaulo } = require('../util/datas');
 const { calcularHorariosLivres, criarAgendamento } = require('../util/agendamentos');
+const { porTokenDoPortal, porSessao } = require('../middlewares/clienteAuth');
 const { responderImagem } = require('../util/imagens');
+const { soDigitos, telefoneEmUso, telefoneAtual } = require('../util/telefone');
 
 const router = express.Router();
 
@@ -35,22 +37,18 @@ router.use(limiteLeitura);
  * acesso vencido — o cliente não pode ser punido com erro obscuro.
  */
 async function resolverToken(token) {
-  if (!token || token.length < 20 || token.length > 64) return null;
-  const r = await executeQuery(
-    `SELECT c.id, c.nome, c.telefone, c.email, c.endereco, c.empresa_id,
-            e.nome AS petshop_nome, e.whatsapp AS petshop_whatsapp,
-            e.acesso_ate, e.ativo AS empresa_ativa, e.aceita_online,
-            e.mp_access_token, e.mp_webhook_secret,
-            (e.logo IS NOT NULL) AS tem_logo, e.logo_versao
-       FROM clientes c
-       JOIN empresas e ON e.id = c.empresa_id
-      WHERE c.token_portal = $1 AND c.ativo`,
-    [token]
-  );
-  const cliente = r.recordset[0];
-  if (!cliente || !cliente.empresa_ativa) return null;
-  if (new Date(cliente.acesso_ate).getTime() < Date.now()) return { indisponivel: true };
-  return cliente;
+  return porTokenDoPortal(token);
+}
+
+/**
+ * As rotas do app do cliente atendem as duas portas: o link (com :token na
+ * URL) e a conta (com a sessão no cabeçalho). Uma função só para as duas.
+ */
+async function resolverCliente(req) {
+  if (req.params && req.params.token && req.params.token !== 'conta') {
+    return porTokenDoPortal(String(req.params.token));
+  }
+  return porSessao(req.headers.authorization);
 }
 
 function responderToken(res, cliente) {
@@ -66,7 +64,7 @@ function responderToken(res, cliente) {
 
 router.get('/:token', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const [pets, pacotes, itens, baixas, agendamentos, servicos, modelos,
@@ -180,6 +178,9 @@ router.get('/:token', async (req, res, next) => {
       petshop: {
         nome: cliente.petshop_nome,
         whatsapp: cliente.petshop_whatsapp,
+        // O apelido serve para as fotos: no modo conta o <img> não manda
+        // cabeçalho, então a imagem sai pela rota pública da vitrine.
+        slug: cliente.slug || null,
         tem_logo: !!cliente.tem_logo,
         logo_versao: cliente.logo_versao || null,
         aceita_online: !!cliente.aceita_online,
@@ -219,7 +220,7 @@ router.get('/:token', async (req, res, next) => {
 
 router.get('/:token/logo', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!cliente || cliente.indisponivel) return res.status(404).end();
     const r = await executeQuery('SELECT logo FROM empresas WHERE id = $1',
       [cliente.empresa_id]);
@@ -231,7 +232,7 @@ router.get('/:token/logo', async (req, res, next) => {
 
 router.get('/:token/produtos/:id/foto', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!cliente || cliente.indisponivel) return res.status(404).end();
     const produtoId = parseInt(req.params.id, 10);
     if (!Number.isInteger(produtoId)) return res.status(404).end();
@@ -249,7 +250,7 @@ router.get('/:token/produtos/:id/foto', async (req, res, next) => {
 
 router.get('/:token/extras', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const [fotos, vacinas, aAvaliar] = await Promise.all([
@@ -292,7 +293,7 @@ router.get('/:token/extras', async (req, res, next) => {
 
 router.post('/:token/avaliar', limiteEscrita, async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const agendamentoId = parseInt((req.body || {}).agendamento_id, 10);
@@ -332,7 +333,7 @@ router.post('/:token/avaliar', limiteEscrita, async (req, res, next) => {
 // Cliente entra na fila de encaixe de um dia cheio.
 router.post('/:token/fila', limiteEscrita, async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
     if (!cliente.aceita_online) {
       return res.status(409).json({ erro: 'Este petshop não aceita pedidos pelo aplicativo.' });
@@ -388,14 +389,27 @@ router.post('/:token/fila', limiteEscrita, async (req, res, next) => {
 
 router.put('/:token/dados', limiteEscrita, async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const { telefone, email, endereco } = req.body || {};
+
+    // O telefone é o login da conta: não pode colidir com outro cliente
+    // do mesmo petshop, senão a entrada fica ambígua.
+    const digitos = soDigitos(telefone);
+    const anterior = await telefoneAtual(executeQuery, cliente.empresa_id, cliente.id);
+    if (digitos !== anterior &&
+        await telefoneEmUso(executeQuery, cliente.empresa_id, digitos, cliente.id)) {
+      return res.status(409).json({
+        erro: 'Este telefone já está cadastrado no petshop. Fale com eles para ajustar.',
+      });
+    }
+
     await executeQuery(
-      `UPDATE clientes SET telefone = $1, email = $2, endereco = $3
-        WHERE id = $4 AND empresa_id = $5`,
+      `UPDATE clientes SET telefone = $1, telefone_digitos = $2, email = $3, endereco = $4
+        WHERE id = $5 AND empresa_id = $6`,
       [String(telefone || '').trim() || null,
+       digitos,
        String(email || '').trim() || null,
        String(endereco || '').trim().slice(0, 500) || null,
        cliente.id, cliente.empresa_id]
@@ -410,7 +424,7 @@ router.put('/:token/dados', limiteEscrita, async (req, res, next) => {
 
 router.post('/:token/pets', limiteEscrita, async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const nome = String((req.body || {}).nome || '').trim();
@@ -441,7 +455,7 @@ router.post('/:token/pets', limiteEscrita, async (req, res, next) => {
 
 router.get('/:token/horarios-livres', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
     if (!cliente.aceita_online) {
       return res.status(409).json({ erro: 'Este petshop não aceita agendamento pelo aplicativo.' });
@@ -468,7 +482,7 @@ router.get('/:token/horarios-livres', async (req, res, next) => {
 
 router.post('/:token/agendar', limiteEscrita, async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
     if (!cliente.aceita_online) {
       return res.status(409).json({ erro: 'Este petshop não aceita agendamento pelo aplicativo.' });
@@ -527,7 +541,7 @@ router.post('/:token/agendar', limiteEscrita, async (req, res, next) => {
 
 router.post('/:token/agendamentos/:id/cancelar', async (req, res, next) => {
   try {
-    const cliente = await resolverToken(String(req.params.token || ''));
+    const cliente = await resolverCliente(req);
     if (!responderToken(res, cliente)) return;
 
     const agendamentoId = parseInt(req.params.id, 10);

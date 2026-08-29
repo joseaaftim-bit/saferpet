@@ -1,8 +1,9 @@
 'use strict';
 
 // Pagamento online: o CLIENTE paga o PETSHOP (credenciais do Mercado Pago
-// de cada empresa). Rotas públicas — a credencial do cliente é o token do
-// portal; o webhook é validado por HMAC do segredo daquela empresa.
+// de cada empresa). Rotas públicas — a credencial do cliente é o link
+// com token OU o crachá da conta dele; o webhook é validado por HMAC do
+// segredo daquela empresa.
 
 const express = require('express');
 const rateLimit = require('express-rate-limit');
@@ -13,6 +14,7 @@ const {
   criarPreferencia, consultarPagamento, buscarPagamentosDaPreferencia, validarAssinatura,
 } = require('../util/mercadopago');
 const { hojeSaoPaulo, somarMeses } = require('../util/datas');
+const { idDaSessao } = require('../middlewares/clienteAuth');
 
 const router = express.Router();
 
@@ -36,16 +38,16 @@ const limiteCompra = rateLimit({
   standardHeaders: false, legacyHeaders: false, validate: false,
 });
 
-// Carrega o cliente pelo token do portal, com a empresa e as credenciais.
-async function clientePorToken(token) {
+// Carrega o cliente com a empresa e as credenciais de pagamento dela.
+async function carregarCliente(where, params) {
   const r = await executeQuery(
-    `SELECT c.id, c.nome, c.email, c.endereco, c.empresa_id,
+    `SELECT c.id, c.nome, c.email, c.endereco, c.empresa_id, c.conta_ativa,
             e.nome AS empresa_nome, e.acesso_ate, e.ativo AS empresa_ativa,
             e.aceita_online, e.mp_access_token, e.mp_webhook_secret
        FROM clientes c
        JOIN empresas e ON e.id = c.empresa_id
-      WHERE c.token_portal = $1 AND c.ativo`,
-    [token]
+      WHERE ${where} AND c.ativo`,
+    params
   );
   const cliente = r.recordset[0];
   if (!cliente || !cliente.empresa_ativa) return null;
@@ -53,11 +55,35 @@ async function clientePorToken(token) {
   return cliente;
 }
 
+async function clientePorToken(token) {
+  return carregarCliente('c.token_portal = $1', [token]);
+}
+
+// Duas portas para o mesmo cliente: o link antigo (/portal/<token>) e a
+// conta com telefone e senha (/portal/conta + crachá no cabeçalho).
+async function clienteDaRequisicao(req) {
+  const bruto = req.params && req.params.token;
+  if (bruto && bruto !== 'conta') return clientePorToken(String(bruto));
+
+  const clienteId = idDaSessao(req.headers.authorization);
+  if (!clienteId) return null;
+  const cliente = await carregarCliente('c.id = $1', [clienteId]);
+  return cliente && cliente.conta_ativa ? cliente : null;
+}
+
+// Para onde o Mercado Pago devolve o cliente depois de pagar.
+function urlDeRetorno(req) {
+  const bruto = req.params && req.params.token;
+  return bruto && bruto !== 'conta'
+    ? `${APP_URL}/portal/${encodeURIComponent(bruto)}`
+    : `${APP_URL}/portal/conta`;
+}
+
 // ─── Cliente inicia a compra de um pacote ──────────────────────────
 
 router.post('/portal/:token/comprar', limiteCompra, async (req, res, next) => {
   try {
-    const cliente = await clientePorToken(String(req.params.token || ''));
+    const cliente = await clienteDaRequisicao(req);
     if (!cliente) return res.status(404).json({ erro: 'Link inválido.' });
     if (!cliente.aceita_online) {
       return res.status(409).json({ erro: 'Este petshop não vende pacotes pelo aplicativo. Fale com eles.' });
@@ -99,7 +125,7 @@ router.post('/portal/:token/comprar', limiteCompra, async (req, res, next) => {
         titulo: `${modelo.nome} — ${cliente.empresa_nome}`,
         valorCentavos: modelo.valor_centavos,
         externalReference: `pagamento:${pagamentoId}`,
-        urlRetorno: `${APP_URL}/portal/${req.params.token}`,
+        urlRetorno: urlDeRetorno(req),
         urlWebhook: `${APP_URL}/api/pagamentos/webhook/${cliente.empresa_id}`,
         emailComprador: cliente.email || undefined,
       });
@@ -444,7 +470,7 @@ async function creditarPacote(query, { empresaId, pagamento, paymentId }) {
 
 router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
   try {
-    const cliente = await clientePorToken(String(req.params.token || ''));
+    const cliente = await clienteDaRequisicao(req);
     if (!cliente) return res.status(404).json({ erro: 'Link inválido.' });
 
     const accessToken = decifrar(cliente.mp_access_token);
@@ -554,7 +580,7 @@ router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
         titulo: `Pedido #${criado.pedidoId} — ${cliente.empresa_nome}`,
         valorCentavos: criado.total,
         externalReference: `pagamento:${criado.pagamentoId}`,
-        urlRetorno: `${APP_URL}/portal/${req.params.token}`,
+        urlRetorno: urlDeRetorno(req),
         urlWebhook: `${APP_URL}/api/pagamentos/webhook/${empresaId}`,
         emailComprador: cliente.email || undefined,
         // Casado com o prazo de expirarPedidosAbandonados (60 min).
@@ -614,7 +640,7 @@ router.post('/portal/:token/pedido', limiteCompra, async (req, res, next) => {
 
 router.get('/portal/:token/pagamentos', async (req, res, next) => {
   try {
-    const cliente = await clientePorToken(String(req.params.token || ''));
+    const cliente = await clienteDaRequisicao(req);
     if (!cliente) return res.status(404).json({ erro: 'Link inválido.' });
     const r = await executeQuery(
       `SELECT p.id, p.tipo, p.valor_centavos, p.status, p.criado_em, p.aprovado_em,

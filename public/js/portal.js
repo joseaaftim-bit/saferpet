@@ -1,11 +1,57 @@
 'use strict';
 
-// App do cliente. Acesso pelo link com token — sem senha. Permite ver
-// créditos, comprar pacote, agendar (com leva-e-traz) e cancelar.
+// App do cliente. Duas portas para o mesmo lugar:
+//   /portal/<token>  — o link que o petshop mandou, sem senha
+//   /portal/conta    — a conta própria (telefone e senha), crachá guardado
+// Permite ver créditos, comprar pacote, agendar (com leva-e-traz) e cancelar.
 
 (function () {
   const raiz = document.getElementById('portal');
   const token = decodeURIComponent(window.location.pathname.split('/').pop());
+  const CHAVE_SESSAO = 'saferpet_conta';
+  const modoConta = token === 'conta';
+
+  const CHAVE_SLUG = 'saferpet_conta_slug';
+
+  function cracha() {
+    try { return localStorage.getItem(CHAVE_SESSAO) || ''; } catch (_e) { return ''; }
+  }
+
+  function lembrarSlug(novo) {
+    try {
+      if (novo) localStorage.setItem(CHAVE_SLUG, novo);
+      return localStorage.getItem(CHAVE_SLUG) || '';
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  function sairDaConta(mensagem) {
+    const slug = (dados && dados.petshop && dados.petshop.slug) || lembrarSlug();
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (_e) { /* nada a fazer */ }
+    const destino = slug ? `/${slug}` : '/';
+    if (mensagem) {
+      raiz.innerHTML = `<div class="vazio" style="margin-top:60px">${mensagem}</div>`;
+      setTimeout(() => window.location.replace(destino), 1800);
+    } else {
+      window.location.replace(destino);
+    }
+  }
+
+  // Cabeçalhos de cada porta: a conta manda o crachá, o link não precisa.
+  function cabecalhos(extra) {
+    const base = { 'Content-Type': 'application/json', ...(extra || {}) };
+    if (modoConta) base.Authorization = `Bearer ${cracha()}`;
+    return base;
+  }
+
+  // Fotos e logo: <img> não manda cabeçalho, então no modo conta a
+  // imagem sai pela rota pública da vitrine do petshop.
+  function urlImagem(caminho) {
+    const slug = (dados && dados.petshop && dados.petshop.slug) || lembrarSlug();
+    if (modoConta && slug) return `/api/vitrine/${encodeURIComponent(slug)}${caminho}`;
+    return `/api/portal/${encodeURIComponent(token)}${caminho}`;
+  }
   let dados = null;
   let extras = null;
   const carrinho = new Map(); // produto_id -> quantidade
@@ -62,7 +108,7 @@
   async function api(caminho, opcoes = {}) {
     const resp = await fetch(`/api/portal/${encodeURIComponent(token)}${caminho}`, {
       ...opcoes,
-      headers: { 'Content-Type': 'application/json', ...(opcoes.headers || {}) },
+      headers: cabecalhos(opcoes.headers),
       body: opcoes.body ? JSON.stringify(opcoes.body) : undefined,
     });
     const corpo = await resp.json().catch(() => ({}));
@@ -73,7 +119,7 @@
   async function apiPagamentos(caminho, opcoes = {}) {
     const resp = await fetch(`/api/pagamentos/portal/${encodeURIComponent(token)}${caminho}`, {
       ...opcoes,
-      headers: { 'Content-Type': 'application/json', ...(opcoes.headers || {}) },
+      headers: cabecalhos(opcoes.headers),
       body: opcoes.body ? JSON.stringify(opcoes.body) : undefined,
     });
     const corpo = await resp.json().catch(() => ({}));
@@ -139,14 +185,15 @@
       <div style="display: flex; align-items: center; gap: 12px">
         <div class="marca-icone" style="width: 44px; height: 44px; ${dados.petshop.tem_logo ? 'padding: 2px; background: var(--bg-panel)' : ''}">
           ${dados.petshop.tem_logo
-            ? `<img src="/api/portal/${encodeURIComponent(token)}/logo?v=${esc(dados.petshop.logo_versao || '')}" alt=""
+            ? `<img src="${urlImagem(`/logo?v=${esc(dados.petshop.logo_versao || '')}`)}" alt=""
                  style="width: 100%; height: 100%; object-fit: contain; border-radius: 10px">`
             : PATA}
         </div>
-        <div>
+        <div style="flex: 1; min-width: 0">
           <div class="marca-nome" style="font-size: 1.35rem">${esc(dados.petshop.nome)}</div>
           <div class="marca-empresa">Olá, ${esc(dados.cliente.nome)}</div>
         </div>
+        ${modoConta ? '<button class="btn-fantasma btn-mini" id="sair-conta">Sair</button>' : ''}
       </div>
 
       ${pacote ? `
@@ -316,6 +363,8 @@
     if (bComprar) bComprar.addEventListener('click', modalComprar);
     const bLoja = document.getElementById('botao-loja');
     if (bLoja) bLoja.addEventListener('click', modalLoja);
+    const bSair = document.getElementById('sair-conta');
+    if (bSair) bSair.addEventListener('click', () => sairDaConta(null));
     document.getElementById('botao-novo-pet').addEventListener('click', modalNovoPet);
     document.getElementById('botao-meus-dados').addEventListener('click', modalMeusDados);
 
@@ -559,7 +608,7 @@
       <div style="display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto">
         ${produtos.map(p => `
           <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 12px">
-            ${p.tem_foto ? `<img src="/api/portal/${encodeURIComponent(token)}/produtos/${p.id}/foto?v=${esc(p.foto_versao || '')}"
+            ${p.tem_foto ? `<img src="${urlImagem(`/produtos/${p.id}/foto?v=${esc(p.foto_versao || '')}`)}"
                  alt="" decoding="async" width="56" height="56"
                  style="width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0">` : ''}
             <div style="flex: 1; min-width: 0">
@@ -727,12 +776,23 @@
     ]);
     dados = principal;
     extras = adicionais;
+    if (modoConta && dados.petshop && dados.petshop.slug) lembrarSlug(dados.petshop.slug);
     renderizar();
   }
 
-  carregar().catch(err => {
-    raiz.innerHTML = `<div class="vazio">${esc(err.message)}</div>`;
-  });
+  // Modo conta sem crachá: nem tenta o servidor, manda entrar de novo.
+  if (modoConta && !cracha()) {
+    sairDaConta('Sua sessão terminou. Entre de novo com o seu telefone e senha.');
+  } else {
+    carregar().catch(err => {
+      // Crachá vencido ou revogado: limpa e volta para a porta de entrada.
+      if (modoConta && /sessão expirada|Link inválido/i.test(err.message || '')) {
+        sairDaConta('Sua sessão terminou. Entre de novo com o seu telefone e senha.');
+        return;
+      }
+      raiz.innerHTML = `<div class="vazio">${esc(err.message)}</div>`;
+    });
+  }
 
   // Voltou do Mercado Pago: o cliente PRECISA saber o que aconteceu, mesmo
   // que o crédito demore. Mostra a situação e acompanha até resolver.

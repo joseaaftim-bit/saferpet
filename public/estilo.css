@@ -276,3 +276,70 @@ a:hover { color: var(--primary); }
   .linha { flex-wrap: wrap; }
   .agenda-data { min-width: 150px; font-size: 1rem; }
 }
+
+/* ─── Vitrine pública do petshop (/apelido) ─── */
+.vitrine { max-width: 760px; margin: 0 auto; padding: 0 20px 56px; display: flex; flex-direction: column; gap: 22px; }
+
+.vitrine-capa {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  text-align: center; padding: 44px 20px 8px;
+}
+.vitrine-logo {
+  width: 92px; height: 92px; border-radius: 26px; object-fit: cover;
+  border: 1px solid var(--border); background: var(--bg-panel); box-shadow: var(--shadow-card);
+}
+.vitrine-logo-vazia {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--primary-soft); border-color: var(--primary-border); color: var(--primary-ink);
+  font-family: var(--fonte-titulo); font-size: 2.4rem; font-weight: 550;
+}
+.vitrine-capa h1 { font-size: 2.3rem; line-height: 1.1; }
+.vitrine-capa p { color: var(--text-muted); font-size: 0.95rem; max-width: 46ch; }
+.vitrine-acoes { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+
+.vitrine-secao { display: flex; flex-direction: column; gap: 12px; }
+.vitrine-secao > h2 { font-size: 1.5rem; }
+.vitrine-secao > .rotulo-secao + h2 { margin-top: -6px; }
+
+.vitrine-preco {
+  font-family: var(--fonte-titulo); font-size: 1.15rem; font-weight: 550;
+  color: var(--primary-ink); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.vitrine-pacote { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.vitrine-pacote-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+.vitrine-pacote-topo h3 { font-size: 1.15rem; }
+.vitrine-itens { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.vitrine-produtos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.vitrine-produto { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.vitrine-produto img, .vitrine-produto .sem-foto {
+  width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+}
+.vitrine-produto .sem-foto { display: flex; align-items: center; justify-content: center; color: var(--text-subtle); }
+.vitrine-produto-nome { font-size: 0.9rem; font-weight: 600; line-height: 1.3; }
+
+.vitrine-rodape {
+  text-align: center; color: var(--text-subtle); font-size: 0.8rem;
+  padding-top: 18px; border-top: 1px solid var(--border);
+}
+.vitrine-rodape a { color: var(--text-muted); text-decoration: none; }
+
+.aviso-suave {
+  background: var(--primary-soft); border: 1px solid var(--primary-border);
+  color: var(--primary-ink); border-radius: 12px; padding: 14px 18px;
+  font-size: 0.9rem; line-height: 1.55;
+}
+
+.erro-campo { color: var(--danger); font-size: 0.84rem; font-weight: 600; }
+.link-texto {
+  background: none; border: none; color: var(--primary-ink); font-size: 0.86rem;
+  font-weight: 600; cursor: pointer; text-decoration: underline; padding: 0;
+}
+
+@media (max-width: 520px) {
+  .vitrine-capa { padding-top: 30px; }
+  .vitrine-capa h1 { font-size: 1.9rem; }
+  .vitrine-produtos { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+}

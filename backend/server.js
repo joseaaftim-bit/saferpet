@@ -30,6 +30,7 @@ app.get('/api/health', async (_req, res) => {
 // ─── API ───────────────────────────────────────────────────────────
 app.use('/api/auth', require('./rotas/auth'));
 app.use('/api/portal', require('./rotas/portal'));
+app.use('/api/vitrine', require('./rotas/vitrine'));
 app.use('/api/pagamentos', require('./rotas/pagamentos'));
 app.use('/api/hub', require('./rotas/hub'));
 app.use('/api/assinatura', require('./rotas/assinatura'));
@@ -54,6 +55,12 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 app.use(express.static(PUBLIC_DIR));
 app.get('/app', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'app.html')));
 app.get('/portal/:token', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'portal.html')));
+// Endereço público do petshop: /salvapatas. Vem por último, depois dos
+// arquivos estáticos, para não engolir /js, /estilo.css e afins.
+app.get('/:slug', (req, res, next) => {
+  if (/[./]/.test(req.params.slug)) return next();
+  res.sendFile(path.join(PUBLIC_DIR, 'vitrine.html'));
+});
 
 // ─── Erros: log completo no servidor, mensagem genérica para fora ──
 app.use((err, _req, res, _next) => {

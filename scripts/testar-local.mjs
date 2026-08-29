@@ -23,6 +23,23 @@ const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // quebra o ROLLBACK depois de uma escrita).
 const db = newDb();
 
+// pg-mem traz pouquíssimas funções nativas. regexp_replace existe no
+// Postgres desde sempre — aqui só ensinamos o dublê a fazer o mesmo.
+db.public.registerFunction({
+  name: 'regexp_replace',
+  args: ['text', 'text', 'text', 'text'],
+  returns: 'text',
+  implementation: (valor, padrao, troca, flags) =>
+    valor == null ? null : String(valor).replace(new RegExp(padrao, flags || ''), troca),
+});
+db.public.registerFunction({
+  name: 'regexp_replace',
+  args: ['text', 'text', 'text'],
+  returns: 'text',
+  implementation: (valor, padrao, troca) =>
+    valor == null ? null : String(valor).replace(new RegExp(padrao), troca),
+});
+
 function removerForUpdate(sql) {
   const m = /^([\s\S]*?)\s+FOR\s+UPDATE(\s+OF\s+[\w,\s]+)?\s*;?\s*$/i.exec(sql);
   return m ? m[1] : sql;
@@ -1170,6 +1187,146 @@ try {
     verificar('desligar o app aparece no guia e no que o cliente vê',
       desligado.dados.completo === false && desligado.dados.cliente_ve.agendar === false);
     await chamar('PUT', '/api/empresa', { token: tokenA, corpo: { nome: 'Salva Patas', aceita_online: true } });
+  }
+  console.log('\n— Endereço público do petshop (degrau 1) —');
+  {
+    const semSlug = await chamar('GET', '/api/vitrine/nao-existe-mesmo');
+    verificar('endereço inexistente dá 404', semSlug.status === 404);
+
+    const slugRuim = await chamar('PUT', '/api/empresa', { token: tokenA, corpo: {
+      nome: 'Salva Patas', slug: 'api',
+    }});
+    verificar('endereço reservado do sistema é recusado', slugRuim.status === 400);
+
+    const slugOk = await chamar('PUT', '/api/empresa', { token: tokenA, corpo: {
+      nome: 'Salva Patas', slug: 'Salva Patas',
+    }});
+    const empSlug = await chamar('GET', '/api/empresa', { token: tokenA });
+    verificar('apelido normaliza acento e espaço',
+      slugOk.status === 200 && empSlug.dados.slug === 'salva-patas' &&
+      String(empSlug.dados.endereco_publico || '').endsWith('/salva-patas'),
+      JSON.stringify({ slug: empSlug.dados.slug, url: empSlug.dados.endereco_publico }));
+
+    const slugTomado = await chamar('PUT', '/api/empresa', { token: tokenB, corpo: {
+      nome: 'Outro Pet', slug: 'salva-patas',
+    }});
+    verificar('outro petshop não toma o mesmo endereço',
+      slugTomado.status === 409 || slugTomado.status === 402, JSON.stringify(slugTomado.dados));
+
+    const vit = await chamar('GET', '/api/vitrine/salva-patas');
+    verificar('vitrine pública mostra pacotes, serviços e produtos',
+      vit.status === 200 && vit.dados.petshop.nome === 'Salva Patas' &&
+      vit.dados.pacotes.length >= 1 && vit.dados.servicos.length >= 1,
+      JSON.stringify({ p: vit.dados.pacotes && vit.dados.pacotes.length, s: vit.dados.servicos && vit.dados.servicos.length }));
+
+    verificar('vitrine não vaza nada de cliente nem credencial',
+      !JSON.stringify(vit.dados).includes('Mariana') &&
+      !JSON.stringify(vit.dados).includes('token_portal') &&
+      !JSON.stringify(vit.dados).includes('APP_USR'));
+  }
+
+  console.log('\n— Conta do dono de pet (degrau 2) —');
+  {
+    const nova = await chamar('POST', '/api/vitrine/salva-patas/conta', { corpo: {
+      nome: 'Paula Nova', telefone: '(67) 98111-2222', senha: 'minha-senha',
+    }});
+    verificar('telefone novo cria a conta e já entra',
+      nova.status === 201 && !!nova.dados.token, JSON.stringify(nova.dados).slice(0, 140));
+
+    const tokenCliente = nova.dados.token;
+    const minhaConta = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${tokenCliente}` },
+    });
+    const dadosConta = await minhaConta.json();
+    verificar('a conta abre o app do cliente sem link',
+      minhaConta.status === 200 && dadosConta.cliente.nome === 'Paula Nova',
+      JSON.stringify(dadosConta.cliente || {}));
+
+    const senhaErrada = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67981112222', senha: 'chute',
+    }});
+    verificar('senha errada não entra', senhaErrada.status === 401);
+
+    const entrou = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67 98111 2222', senha: 'minha-senha',
+    }});
+    verificar('entra com o telefone digitado de qualquer jeito',
+      entrou.status === 200 && !!entrou.dados.token);
+
+    const repetida = await chamar('POST', '/api/vitrine/salva-patas/conta', { corpo: {
+      nome: 'Paula de novo', telefone: '67981112222', senha: 'outra-senha',
+    }});
+    verificar('não cria segunda conta com o mesmo telefone',
+      repetida.status === 409 && repetida.dados.ja_tem_conta === true);
+
+    const pendente = await chamar('POST', '/api/vitrine/salva-patas/conta', { corpo: {
+      nome: 'Alguem', telefone: '67988887777', senha: 'senha-do-invasor',
+    }});
+    verificar('telefone já cadastrado NÃO entra direto: fica pendente',
+      pendente.status === 202 && pendente.dados.pendente === true,
+      JSON.stringify(pendente.dados).slice(0, 140));
+
+    const loginPendente = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67988887777', senha: 'senha-do-invasor',
+    }});
+    verificar('enquanto pendente, a senha criada NÃO abre a conta', loginPendente.status === 401);
+
+    const lista = await chamar('GET', '/api/empresa/vinculos', { token: tokenA });
+    verificar('o petshop vê o pedido para confirmar',
+      lista.status === 200 && lista.dados.length === 1 && lista.dados[0].telefone === '67988887777',
+      JSON.stringify(lista.dados).slice(0, 160));
+
+    const aprovar = await chamar('PUT', `/api/empresa/vinculos/${lista.dados[0].id}`, {
+      token: tokenA, corpo: { acao: 'APROVAR' },
+    });
+    verificar('petshop aprova o vínculo', aprovar.status === 200);
+
+    const depoisAprovar = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67988887777', senha: 'senha-do-invasor',
+    }});
+    verificar('aprovado, entra e assume o histórico que já existia',
+      depoisAprovar.status === 200 && !!depoisAprovar.dados.token);
+
+    const historico = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${depoisAprovar.dados.token}` },
+    }).then(r => r.json());
+    verificar('o histórico de pacotes veio junto',
+      historico.pacotes.length >= 1 && historico.pets.length >= 1,
+      JSON.stringify({ pac: historico.pacotes && historico.pacotes.length, pets: historico.pets && historico.pets.length }));
+
+    const decidirDeNovo = await chamar('PUT', `/api/empresa/vinculos/${lista.dados[0].id}`, {
+      token: tokenA, corpo: { acao: 'APROVAR' },
+    });
+    verificar('não dá para decidir o mesmo pedido duas vezes', decidirDeNovo.status === 409);
+
+
+    // O telefone virou login: dois clientes com o mesmo número deixariam
+    // a entrada ambígua. Mas cadastro antigo duplicado não pode travar o
+    // petshop na hora de corrigir um nome.
+    const repetido = await chamar('POST', '/api/clientes', {
+      token: tokenA, corpo: { nome: 'Xará da Paula', telefone: '(67) 98111-2222' },
+    });
+    verificar('painel recusa cadastrar dois clientes com o mesmo telefone',
+      repetido.status === 409, JSON.stringify(repetido.dados).slice(0, 120));
+
+    const listaClientes = await chamar('GET', '/api/clientes', { token: tokenA });
+    const paula = listaClientes.dados.find(c => c.nome === 'Paula Nova');
+    const soONome = await chamar('PUT', `/api/clientes/${paula.id}`, {
+      token: tokenA, corpo: { nome: 'Paula Nova Silva', telefone: '(67) 98111-2222' },
+    });
+    verificar('editar o nome sem mexer no telefone continua funcionando',
+      soONome.status === 200, JSON.stringify(soONome.dados).slice(0, 120));
+
+    const roubarNumero = await chamar('PUT', `/api/clientes/${paula.id}`, {
+      token: tokenA, corpo: { nome: 'Paula Nova Silva', telefone: '67988887777' },
+    });
+    verificar('painel recusa mover o telefone de outro cliente para este',
+      roubarNumero.status === 409);
+
+    const tokenTrocado = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    verificar('token do petshop não abre o app do cliente', tokenTrocado.status === 404);
   }
   console.log('\n— Hub, saúde e limites —');
   const hub = await chamar('GET', '/api/hub/metrics', { token: 'hub-de-teste' });

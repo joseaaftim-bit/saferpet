@@ -3,6 +3,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { executeQuery } = require('../database');
+const { soDigitos, telefoneEmUso, telefoneAtual } = require('../util/telefone');
 const { somenteAdmin } = require('../middlewares/autenticacao');
 const { APP_URL } = require('../config/segredos');
 const { hojeSaoPaulo } = require('../util/datas');
@@ -100,14 +101,19 @@ router.post('/', async (req, res, next) => {
     if (!nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Informe o nome do cliente.' });
     }
+    const digitos = soDigitos(telefone);
+    if (await telefoneEmUso(executeQuery, req.usuario.empresa_id, digitos, null)) {
+      return res.status(409).json({ erro: 'Já existe um cliente com este telefone.' });
+    }
     const r = await executeQuery(
-      `INSERT INTO clientes (empresa_id, nome, telefone, email, observacoes, token_portal)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO clientes (empresa_id, nome, telefone, telefone_digitos, email, observacoes, token_portal)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, nome, telefone, email, observacoes, token_portal`,
       [
         req.usuario.empresa_id,
         String(nome).trim(),
         String(telefone || '').trim() || null,
+        digitos,
         String(email || '').trim() || null,
         String(observacoes || '').trim() || null,
         novoTokenPortal(),
@@ -219,14 +225,22 @@ router.put('/:id', async (req, res, next) => {
     if (!Number.isInteger(clienteId) || !nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Dados inválidos.' });
     }
+    const digitos = soDigitos(telefone);
+    const anterior = await telefoneAtual(executeQuery, req.usuario.empresa_id, clienteId);
+    if (digitos !== anterior &&
+        await telefoneEmUso(executeQuery, req.usuario.empresa_id, digitos, clienteId)) {
+      return res.status(409).json({ erro: 'Já existe outro cliente com este telefone.' });
+    }
     const r = await executeQuery(
-      `UPDATE clientes SET nome = $1, telefone = $2, email = $3, observacoes = $4,
-              endereco = CASE WHEN $5::boolean THEN $6 ELSE endereco END
-        WHERE id = $7 AND empresa_id = $8 AND ativo
+      `UPDATE clientes SET nome = $1, telefone = $2, telefone_digitos = $3, email = $4,
+              observacoes = $5,
+              endereco = CASE WHEN $6::boolean THEN $7 ELSE endereco END
+        WHERE id = $8 AND empresa_id = $9 AND ativo
         RETURNING id`,
       [
         String(nome).trim(),
         String(telefone || '').trim() || null,
+        digitos,
         String(email || '').trim() || null,
         String(observacoes || '').trim() || null,
         endereco !== undefined,

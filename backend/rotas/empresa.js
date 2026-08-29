@@ -7,6 +7,8 @@ const { somenteAdmin } = require('../middlewares/autenticacao');
 const { cifrar, decifrar, mascarar } = require('../util/cripto');
 const { APP_URL } = require('../config/segredos');
 const { versaoDe, responderImagem } = require('../util/imagens');
+const { validarSlug } = require('../util/slug');
+const { comTransacao } = require('../database');
 
 const router = express.Router();
 
@@ -22,7 +24,7 @@ router.get('/', somenteAdmin, async (req, res, next) => {
       executeQuery(
         `SELECT aceita_online, mp_access_token, mp_webhook_secret,
                 vende_produtos, taxa_entrega_centavos, entrega_gratis_acima_centavos,
-                (logo IS NOT NULL) AS tem_logo, logo_versao
+                (logo IS NOT NULL) AS tem_logo, logo_versao, slug
            FROM empresas WHERE id = $1`,
         [req.usuario.empresa_id]),
     ]);
@@ -36,6 +38,8 @@ router.get('/', somenteAdmin, async (req, res, next) => {
       aceita_online: !!c.aceita_online,
       tem_logo: !!c.tem_logo,
       logo_versao: c.logo_versao,
+      slug: c.slug,
+      endereco_publico: c.slug ? `${APP_URL}/${c.slug}` : null,
       vende_produtos: !!c.vende_produtos,
       taxa_entrega_centavos: c.taxa_entrega_centavos || 0,
       entrega_gratis_acima_centavos: c.entrega_gratis_acima_centavos,
@@ -53,7 +57,7 @@ router.get('/', somenteAdmin, async (req, res, next) => {
 router.put('/', somenteAdmin, async (req, res, next) => {
   try {
     const { nome, whatsapp, aceita_online, vende_produtos,
-            taxa_entrega_centavos, entrega_gratis_acima_centavos, logo } = req.body || {};
+            taxa_entrega_centavos, entrega_gratis_acima_centavos, logo, slug } = req.body || {};
     if (!nome || !String(nome).trim()) {
       return res.status(400).json({ erro: 'Informe o nome do petshop.' });
     }
@@ -70,6 +74,19 @@ router.put('/', somenteAdmin, async (req, res, next) => {
         return res.status(413).json({ erro: 'Logo muito grande. Use uma imagem menor.' });
       }
       logoValidada = logo;
+    }
+
+    // Apelido do endereço público. Só muda quando vem no corpo.
+    let slugValidado;
+    if (slug !== undefined) {
+      const v = validarSlug(slug);
+      if (!v.ok) return res.status(400).json({ erro: v.erro });
+      const ocupado = await executeQuery(
+        'SELECT id FROM empresas WHERE slug = $1 AND id <> $2', [v.slug, req.usuario.empresa_id]);
+      if (ocupado.recordset.length) {
+        return res.status(409).json({ erro: 'Este endereço já é de outro petshop. Escolha outro.' });
+      }
+      slugValidado = v.slug;
     }
 
     const taxa = taxa_entrega_centavos === undefined ? null : parseInt(taxa_entrega_centavos, 10);
@@ -92,8 +109,9 @@ router.put('/', somenteAdmin, async (req, res, next) => {
               entrega_gratis_acima_centavos = CASE WHEN $6::boolean THEN $7::int
                                                    ELSE entrega_gratis_acima_centavos END,
               logo = CASE WHEN $8::boolean THEN $9 ELSE logo END,
-              logo_versao = CASE WHEN $8::boolean THEN $10 ELSE logo_versao END
-        WHERE id = $11`,
+              logo_versao = CASE WHEN $8::boolean THEN $10 ELSE logo_versao END,
+              slug = COALESCE($11, slug)
+        WHERE id = $12`,
       [String(nome).trim(), String(whatsapp || '').trim() || null,
        typeof aceita_online === 'boolean' ? aceita_online : null,
        typeof vende_produtos === 'boolean' ? vende_produtos : null,
@@ -101,6 +119,7 @@ router.put('/', somenteAdmin, async (req, res, next) => {
        gratisAcima !== undefined, gratisAcima === undefined ? null : gratisAcima,
        logoValidada !== undefined, logoValidada === undefined ? null : logoValidada,
        versaoDe(logoValidada),
+       slugValidado === undefined ? null : slugValidado,
        req.usuario.empresa_id]
     );
     res.json({ ok: true });
@@ -145,6 +164,76 @@ router.put('/pagamento', somenteAdmin, async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Pedidos de conta do cliente (vínculo pendente) ────────────────
+// Alguém tentou criar conta com um telefone que já está no cadastro do
+// petshop. Quem confirma que é a pessoa certa é o petshop, que conhece o
+// cliente do balcão.
+
+router.get('/vinculos', async (req, res, next) => {
+  try {
+    const r = await executeQuery(
+      `SELECT v.id, v.nome, v.telefone, v.email, v.criado_em,
+              c.id AS cliente_id, c.nome AS cliente_nome
+         FROM vinculos_pendentes v
+         JOIN clientes c ON c.id = v.cliente_id
+        WHERE v.empresa_id = $1 AND v.status = 'PENDENTE'
+        ORDER BY v.criado_em`,
+      [req.usuario.empresa_id]
+    );
+    res.json(r.recordset);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/vinculos/:id', somenteAdmin, async (req, res, next) => {
+  try {
+    const vinculoId = parseInt(req.params.id, 10);
+    const acao = String((req.body || {}).acao || '');
+    if (!Number.isInteger(vinculoId) || !['APROVAR', 'RECUSAR'].includes(acao)) {
+      return res.status(400).json({ erro: 'Ação inválida.' });
+    }
+    const empresaId = req.usuario.empresa_id;
+
+    const resultado = await comTransacao(async (query) => {
+      const rv = await query(
+        `SELECT id, cliente_id, nome, telefone, email, senha_hash, status
+           FROM vinculos_pendentes WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+        [vinculoId, empresaId]
+      );
+      const vinculo = rv.recordset[0];
+      if (!vinculo) return null;
+      if (vinculo.status !== 'PENDENTE') {
+        throw Object.assign(new Error('Este pedido já foi decidido.'), { statusHttp: 409 });
+      }
+
+      if (acao === 'APROVAR') {
+        // A senha que a pessoa criou passa a valer para o cadastro que já
+        // existia — o histórico de banhos e pacotes continua o mesmo.
+        await query(
+          `UPDATE clientes SET senha_hash = $1, conta_ativa = TRUE, conta_criada_em = NOW(),
+                  email = COALESCE(email, $2)
+            WHERE id = $3 AND empresa_id = $4`,
+          [vinculo.senha_hash, vinculo.email, vinculo.cliente_id, empresaId]
+        );
+      }
+
+      await query(
+        `UPDATE vinculos_pendentes SET status = $1, decidido_em = NOW(), decidido_por = $2
+          WHERE id = $3 AND empresa_id = $4`,
+        [acao === 'APROVAR' ? 'APROVADO' : 'RECUSADO', req.usuario.id, vinculoId, empresaId]
+      );
+      return { id: vinculoId, acao, nome: vinculo.nome };
+    });
+
+    if (!resultado) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    if (err.statusHttp) return res.status(err.statusHttp).json({ erro: err.message });
     next(err);
   }
 });

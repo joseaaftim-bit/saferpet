@@ -8,6 +8,9 @@
   const areaModal = document.getElementById('area-modal');
   const areaToast = document.getElementById('area-toast');
 
+  // Endereço público mostrado ao lado do apelido do petshop.
+  const BASE_PUBLICA = window.location.host;
+
   let sessao = null;          // { usuario, empresa } vindo de /api/auth/me
   let servicosCache = null;   // catálogo de serviços (invalidado ao editar)
 
@@ -208,11 +211,12 @@
 
   async function verVisao() {
     const hoje = hojeISO();
-    const [kpis, dia, recentes, ativacao] = await Promise.all([
+    const [kpis, dia, recentes, ativacao, vinculos] = await Promise.all([
       api('/dashboard'),
       api(`/agenda/dia?data=${hoje}`),
       api('/baixas/recentes?limite=8'),
       api('/dashboard/ativacao').catch(() => null),
+      api('/empresa/vinculos').catch(() => []),
     ]);
 
     const agendaHoje = dia.agendamentos.filter(a => a.status === 'AGENDADO');
@@ -224,12 +228,36 @@
         <p>${esc(sessao.empresa.nome)} — ${dataExtensa(hoje)}</p>
       </div>
 
+      ${vinculos.length ? `
+      <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 14px; border-color: var(--primary-border)">
+        <div>
+          <div class="rotulo-secao">Confirmação de cliente</div>
+          <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 6px; line-height: 1.55">
+            ${vinculos.length === 1 ? 'Uma pessoa criou' : `${vinculos.length} pessoas criaram`}
+            conta com um telefone que já está no seu cadastro. Confirme só se for
+            mesmo o seu cliente — quem aprovar passa a ver todo o histórico dele.
+          </p>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 10px">
+          ${vinculos.map(v => `
+            <div class="linha linha-inset" style="padding: 14px 16px">
+              <div style="flex: 1; min-width: 0">
+                <div class="linha-titulo">${esc(v.nome)} · ${esc(telefoneBonito(v.telefone))}</div>
+                <div class="linha-sub">
+                  Quer entrar na ficha de <strong>${esc(v.cliente_nome)}</strong>${v.email ? ` · ${esc(v.email)}` : ''}
+                </div>
+              </div>
+              <button class="btn-fantasma btn-mini perigo" data-vinculo="${v.id}" data-acao="RECUSAR">Não é</button>
+              <button class="btn-primario btn-mini" data-vinculo="${v.id}" data-acao="APROVAR">É o cliente</button>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
       ${(ativacao && !ativacao.completo) ? `
       <div class="cartao" style="padding: 24px; display: flex; flex-direction: column; gap: 16px; border-color: var(--primary-border)">
         <div>
           <div class="rotulo-secao">Ativação do aplicativo do cliente</div>
           <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 6px; line-height: 1.55">
-            Faltam ${ativacao.faltam} passo${ativacao.faltam === 1 ? '' : 's'} para o seu cliente
+            ${ativacao.faltam === 1 ? 'Falta 1 passo' : `Faltam ${ativacao.faltam} passos`} para o seu cliente
             conseguir agendar e comprar pelo celular. Hoje ele vê:
             <strong>${[
               'o saldo dele',
@@ -313,6 +341,34 @@
           : '<div class="vazio">Nenhuma baixa registrada ainda.</div>'}
         </div>
       </div>`;
+
+    // Confirmar (ou não) quem criou conta com um telefone já cadastrado.
+    conteudo.querySelectorAll('[data-vinculo]').forEach(botao => {
+      botao.addEventListener('click', async () => {
+        const acao = botao.dataset.acao;
+        conteudo.querySelectorAll('[data-vinculo]').forEach(b => { b.disabled = true; });
+        try {
+          const r = await api(`/empresa/vinculos/${botao.dataset.vinculo}`, {
+            method: 'PUT', body: { acao },
+          });
+          toast(acao === 'APROVAR'
+            ? `${r.nome || 'Cliente'} já pode entrar na conta.`
+            : 'Pedido recusado.');
+          await verVisao();
+        } catch (err) {
+          toast(err.message, true);
+          conteudo.querySelectorAll('[data-vinculo]').forEach(b => { b.disabled = false; });
+        }
+      });
+    });
+  }
+
+  // Telefone só com dígitos vira (67) 99999-0000 na tela.
+  function telefoneBonito(valor) {
+    const d = String(valor || '').replace(/\D/g, '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return valor || '';
   }
 
   // ═══ Agenda ══════════════════════════════════════════════════════
@@ -1976,7 +2032,9 @@
         <div class="vazio">Apenas administradores acessam as configurações.</div>`;
       return;
     }
-    const [emp, agenda] = await Promise.all([api('/empresa'), api('/agenda/config')]);
+    const [emp, agenda, vinculos] = await Promise.all([
+      api('/empresa'), api('/agenda/config'), api('/empresa/vinculos').catch(() => []),
+    ]);
 
     const porDia = new Map();
     for (const h of agenda.horarios) {
@@ -2009,6 +2067,16 @@
               <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
               <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
                 <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
+              <div class="campo"><label>Endereço da sua página</label>
+                <div style="display: flex; align-items: center; gap: 2px">
+                  <span style="font-size: 0.86rem; color: var(--text-muted); white-space: nowrap">${esc(BASE_PUBLICA)}/</span>
+                  <input name="slug" value="${esc(emp.slug || '')}" placeholder="salvapatas" style="flex: 1; min-width: 0">
+                </div>
+                <div class="linha-sub" style="margin-top: 4px">
+                  É o link que você manda para o cliente. Ele abre a sua vitrine e cria a conta dele sozinho.
+                  ${emp.endereco_publico ? `<a href="${esc(emp.endereco_publico)}" target="_blank" rel="noopener">Abrir a página</a>` : ''}
+                </div>
+              </div>
               <div class="campo"><label>Logo do petshop</label>
                 <div style="display: flex; align-items: center; gap: 12px">
                   <img id="previa-logo" alt="" ${emp.tem_logo ? `data-img="/api/empresa/logo?v=${esc(emp.logo_versao || '')}"` : ''}
@@ -2177,9 +2245,12 @@
       ev.preventDefault();
       const f = new FormData(ev.target);
       try {
+        const apelido = String(f.get('slug') || '').trim();
         await api('/empresa', { method: 'PUT', body: {
           nome: f.get('nome'), whatsapp: f.get('whatsapp'),
           aceita_online: f.get('aceita_online') === 'on',
+          // Campo vazio não apaga o apelido que já existe.
+          ...(apelido ? { slug: apelido } : {}),
           ...(logoEscolhida !== undefined ? { logo: logoEscolhida } : {}),
         }});
         toast('Dados salvos.');
