@@ -28,7 +28,7 @@ async function validarJwt(req, res, next) {
 
     const r = await executeQuery(
       `SELECT u.id, u.nome, u.email, u.permissoes, u.empresa_id, u.ativo,
-              e.nome AS empresa_nome, e.whatsapp, e.plano, e.acesso_ate,
+              e.nome AS empresa_nome, e.whatsapp, e.plano, e.acesso_ate, e.slug,
               (e.logo IS NOT NULL) AS tem_logo, e.logo_versao,
               e.ativo AS empresa_ativa
          FROM usuarios u
@@ -57,6 +57,7 @@ async function validarJwt(req, res, next) {
       logo_versao: linha.logo_versao || null,
       plano: linha.plano,
       acesso_ate: linha.acesso_ate,
+      slug: linha.slug || null,
     };
     next();
   } catch (err) {

@@ -232,6 +232,15 @@ router.post('/:slug/conta', limiteConta, async (req, res, next) => {
       cliente: { nome: resultado.cliente.nome },
     });
   } catch (err) {
+    // Dois cadastros simultâneos com o mesmo telefone: o índice único
+    // derruba o segundo — para quem pediu, é o mesmo "aguarde".
+    if (err && err.code === '23505') {
+      return res.status(202).json({
+        pendente: true,
+        mensagem: 'Já existe um pedido de confirmação para este telefone. ' +
+          'Fale com o petshop no balcão para concluir o seu acesso.',
+      });
+    }
     next(err);
   }
 });

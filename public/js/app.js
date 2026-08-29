@@ -207,6 +207,137 @@
     return ativos.length ? ativos[ativos.length - 1] : null;
   }
 
+
+  // ─── Dica de campo ───────────────────────────────────────────────
+  // O "?" ao lado do rótulo. Um único balão no documento, posicionado
+  // ao lado do botão. Hover no computador, toque no celular (a dona do
+  // petshop usa celular — hover não existe lá), Escape fecha.
+
+  function dica(texto) {
+    return `<button type="button" class="dica" data-dica="${esc(texto)}"
+      aria-label="Ajuda: ${esc(texto)}" tabindex="0">?</button>`;
+  }
+
+  let balaoDica = null;
+  let dicaAbertaPor = null;   // o botão dono do balão atual
+  let dicaAbertaEm = 0;       // quando abriu (para o toque não fechar o que abriu)
+
+  function fecharDica() {
+    if (balaoDica) { balaoDica.remove(); balaoDica = null; dicaAbertaPor = null; }
+  }
+
+  function abrirDica(botao) {
+    fecharDica();
+    dicaAbertaPor = botao;
+    dicaAbertaEm = Date.now();
+    balaoDica = document.createElement('div');
+    balaoDica.className = 'dica-balao';
+    balaoDica.setAttribute('role', 'tooltip');
+    balaoDica.textContent = botao.dataset.dica;
+    document.body.appendChild(balaoDica);
+
+    // Acima do botão quando couber; abaixo quando não couber.
+    const alvo = botao.getBoundingClientRect();
+    const balao = balaoDica.getBoundingClientRect();
+    let x = alvo.left + alvo.width / 2 - balao.width / 2;
+    x = Math.max(10, Math.min(x, window.innerWidth - balao.width - 10));
+    let y = alvo.top - balao.height - 8;
+    if (y < 10) y = alvo.bottom + 8;
+    balaoDica.style.left = `${x}px`;
+    balaoDica.style.top = `${y}px`;
+  }
+
+  document.addEventListener('mouseover', (ev) => {
+    const botao = ev.target.closest && ev.target.closest('.dica');
+    if (botao) abrirDica(botao);
+  });
+  document.addEventListener('mouseout', (ev) => {
+    if (ev.target.closest && ev.target.closest('.dica')) fecharDica();
+  });
+  document.addEventListener('click', (ev) => {
+    const botao = ev.target.closest && ev.target.closest('.dica');
+    if (botao) {
+      ev.preventDefault();
+      // No celular, o toque dispara um mouseover sintético ANTES do click —
+      // o click do mesmo gesto não pode fechar o balão que acabou de abrir.
+      const doMesmoGesto = dicaAbertaPor === botao && Date.now() - dicaAbertaEm < 500;
+      if (balaoDica && dicaAbertaPor === botao && !doMesmoGesto) fecharDica();
+      else abrirDica(botao);
+      return;
+    }
+    fecharDica();
+  });
+  document.addEventListener('focusin', (ev) => {
+    const botao = ev.target.closest && ev.target.closest('.dica');
+    if (botao) abrirDica(botao); else fecharDica();
+  });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fecharDica(); });
+  window.addEventListener('scroll', () => {
+    // Rolagem provocada pelo próprio foco no "?" reposiciona; o resto fecha.
+    if (dicaAbertaPor && document.activeElement === dicaAbertaPor) abrirDica(dicaAbertaPor);
+    else fecharDica();
+  }, true);
+
+
+  // ─── Boas-vindas do primeiro acesso ──────────────────────────────
+  // Aparece uma vez por aparelho, e só enquanto a ativação estiver
+  // incompleta. O guia de ativação na Visão geral é a trilha; a
+  // boas-vindas só apresenta o caminho e aponta o primeiro passo.
+
+  function mostrarBoasVindas(ativacao) {
+    const chave = `saferpet_bemvindo_${sessao.empresa.id}`;
+    let jaViu = false;
+    try { jaViu = !!localStorage.getItem(chave); } catch (_e) { jaViu = true; }
+    if (jaViu || !ativacao || ativacao.completo) return;
+
+    // A pessoa abriu outro modal enquanto a tela carregava: a saudação
+    // não atropela — tenta de novo na próxima visita à Visão geral.
+    if (document.querySelector('#area-modal .modal')) return;
+
+    // Mostrou uma vez, não insiste: fechar pelo fundo também conta como
+    // visto — a trilha continua no guia de ativação logo abaixo.
+    try { localStorage.setItem(chave, '1'); } catch (_e) { /* segue */ }
+
+    const modal = abrirModal(`
+      <h3>Bem-vindo ao SaferPet</h3>
+      <p style="font-size: 0.9rem; color: var(--text-muted); line-height: 1.6; margin-top: -6px">
+        Em poucos passos o seu petshop fica no ar: os clientes vão agendar,
+        acompanhar o saldo dos pacotes e comprar pelo celular. O caminho:
+      </p>
+      <div class="boasvindas-passos">
+        <div class="boasvindas-passo"><span class="boasvindas-numero">1</span>
+          <div>Cadastre os <strong>serviços</strong> com a duração de cada um
+            <small>É a duração que monta a sua agenda de horários.</small></div>
+        </div>
+        <div class="boasvindas-passo"><span class="boasvindas-numero">2</span>
+          <div>Monte os <strong>pacotes</strong> com preço
+            <small>Ex.: 24 banhos por R$ 700 — o que hoje está no caderno.</small></div>
+        </div>
+        <div class="boasvindas-passo"><span class="boasvindas-numero">3</span>
+          <div>Libere o <strong>aplicativo do cliente</strong> em Configurações
+            <small>E conecte o Mercado Pago para receber pagamento online.</small></div>
+        </div>
+        <div class="boasvindas-passo"><span class="boasvindas-numero">4</span>
+          <div>Mande o <strong>endereço da sua página</strong> aos clientes
+            <small>Cada um cria a própria conta e cadastra os pets.</small></div>
+        </div>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.55">
+        A Visão geral acompanha esses passos com você, e a aba
+        <strong>Ajuda</strong> explica cada tela. Os "?" ao lado dos campos
+        dizem o que preencher.
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap">
+        <button class="btn-fantasma" id="bv-depois" type="button">Explorar por conta própria</button>
+        <button class="btn-primario" id="bv-comecar" type="button">Começar pelos serviços</button>
+      </div>`);
+    ligarFechar(modal);
+    modal.querySelector('#bv-depois').addEventListener('click', fecharModal);
+    modal.querySelector('#bv-comecar').addEventListener('click', () => {
+      fecharModal(); window.location.hash = '#/catalogo';
+    });
+  }
+
   // ═══ Visão geral ═════════════════════════════════════════════════
 
   async function verVisao() {
@@ -361,6 +492,8 @@
         }
       });
     });
+
+    mostrarBoasVindas(ativacao);
   }
 
   // Telefone só com dígitos vira (67) 99999-0000 na tela.
@@ -689,6 +822,16 @@
         <button class="btn-primario" id="botao-novo-cliente" type="button">Novo cliente</button>
       </div>
       <input class="busca" id="campo-busca" type="search" placeholder="Buscar por cliente ou pet" value="${esc(busca || '')}">
+      ${sessao.empresa.slug ? `
+      <div class="linha linha-inset" style="padding: 12px 16px; gap: 12px">
+        <div style="flex: 1; min-width: 200px">
+          <div class="linha-titulo" style="font-size: 0.9rem">Seus clientes podem se cadastrar sozinhos</div>
+          <div class="linha-sub">Mande o endereço da sua página: ${esc(enderecoPublico())}</div>
+        </div>
+        <button class="btn-fantasma btn-mini" id="botao-copiar-vitrine" type="button">Copiar link</button>
+        <a class="btn-fantasma btn-mini" style="text-decoration: none" target="_blank" rel="noopener"
+           href="https://wa.me/?text=${encodeURIComponent(textoConviteVitrine())}">Enviar por WhatsApp</a>
+      </div>` : ''}
       ${clientes.length ? `<div class="lista">${clientes.map(c => {
         const temPacote = c.pacote_id !== null && c.pacote_id !== undefined;
         const acabando = temPacote && c.saldo_total <= 3;
@@ -721,6 +864,12 @@
 
     document.getElementById('botao-novo-cliente').addEventListener('click', modalNovoCliente);
 
+    const botaoVitrine = document.getElementById('botao-copiar-vitrine');
+    if (botaoVitrine) botaoVitrine.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(enderecoPublico()); toast('Link copiado.'); }
+      catch (_e) { toast('Não deu para copiar. O endereço está na faixa acima.', true); }
+    });
+
     const campoBusca = document.getElementById('campo-busca');
     let timer = null;
     campoBusca.addEventListener('input', () => {
@@ -743,7 +892,8 @@
       <h3>Novo cliente</h3>
       <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
         <div class="campo"><label>Nome</label><input name="nome" required></div>
-        <div class="campo"><label>Telefone / WhatsApp</label><input name="telefone" placeholder="67999999999"></div>
+        <div class="campo"><label>Telefone / WhatsApp
+          ${dica('Com DDD. Este número identifica o cliente: é com ele que a pessoa entra na conta dela no aplicativo. Cada cliente precisa de um número diferente.')}</label><input name="telefone" placeholder="67999999999"></div>
         <div class="campo"><label>E-mail (opcional)</label><input name="email" type="email"></div>
         <div class="campo"><label>Observações</label><textarea name="observacoes" rows="2"></textarea></div>
         <div class="campo"><label>Primeiro pet (opcional)</label><input name="pet_nome" placeholder="Nome do pet"></div>
@@ -1017,6 +1167,14 @@
           href="https://wa.me/${numeroWhats}?text=${encodeURIComponent(textoWhats)}">Enviar por WhatsApp</a>` : ''}
         ${ehAdmin() ? '<button class="btn-fantasma btn-mini perigo" id="botao-regenerar" type="button">Gerar novo link</button>' : ''}
       </div>
+      ${c.conta_ativa ? `
+      <div class="linha linha-inset" style="padding: 12px 16px; gap: 12px">
+        <div style="flex: 1; min-width: 160px">
+          <div class="linha-titulo" style="font-size: 0.88rem">Conta própria ativa</div>
+          <div class="linha-sub">Este cliente também entra com telefone e senha.</div>
+        </div>
+        ${ehAdmin() ? '<button class="btn-fantasma btn-mini perigo" id="botao-desconectar" type="button">Desconectar conta</button>' : ''}
+      </div>` : ''}
       <div style="display: flex; justify-content: flex-end"><button class="btn-fantasma" data-fechar type="button">Fechar</button></div>`);
     ligarFechar(modal);
     modal.querySelector('#botao-copiar').addEventListener('click', async () => {
@@ -1029,6 +1187,18 @@
         toast('Link copiado.');
       }
     });
+    const botaoDesconectar = modal.querySelector('#botao-desconectar');
+    if (botaoDesconectar) botaoDesconectar.addEventListener('click', async () => {
+      if (!window.confirm('Desconectar a conta deste cliente? A sessão dele cai na hora, ' +
+        'e ele só volta criando a conta de novo — o que pede a sua confirmação.')) return;
+      try {
+        await api(`/clientes/${c.id}/desconectar-conta`, { method: 'POST' });
+        fecharModal();
+        toast('Conta desconectada.');
+        verFicha(c.id);
+      } catch (err) { toast(err.message, true); }
+    });
+
     const botaoRegenerar = modal.querySelector('#botao-regenerar');
     if (botaoRegenerar) botaoRegenerar.addEventListener('click', async () => {
       if (!window.confirm('Gerar um novo link? O link antigo deixa de funcionar.')) return;
@@ -1413,8 +1583,10 @@
       <form id="form-modal" style="display: flex; flex-direction: column; gap: 14px">
         <div class="campo"><label>Nome</label><input name="nome" value="${s ? esc(s.nome) : ''}" placeholder="Banho e tosa" required></div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
-          <div class="campo"><label>Duração (minutos)</label><input name="duracao" type="number" min="5" step="5" value="${s ? s.duracao_minutos : ''}" placeholder="45" required></div>
-          <div class="campo"><label>Preço avulso (R$)</label><input name="preco" inputmode="decimal" value="${s && s.preco_centavos ? (s.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="80,00"></div>
+          <div class="campo"><label>Duração (minutos)
+            ${dica('Quanto tempo o serviço ocupa na agenda: um banho de 60 minutos marcado às 10:00 deixa o horário ocupado até as 11:00. O aplicativo só oferece horários em que o serviço cabe inteiro.')}</label><input name="duracao" type="number" min="5" step="5" value="${s ? s.duracao_minutos : ''}" placeholder="45" required></div>
+          <div class="campo"><label>Preço avulso (R$)
+            ${dica('O preço de UMA vez, para quem não tem pacote. Pode deixar vazio se este serviço só sai dentro de pacote.')}</label><input name="preco" inputmode="decimal" value="${s && s.preco_centavos ? (s.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="80,00"></div>
         </div>
         ${s ? `
         <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
@@ -1473,8 +1645,10 @@
           <button type="button" class="btn-fantasma btn-mini" id="botao-mais-item" style="align-self: flex-start; margin-top: 6px">Adicionar serviço</button>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
-          <div class="campo"><label>Valor (R$)</label><input name="valor" inputmode="decimal" value="${m ? (m.valor_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="700,00" required></div>
-          <div class="campo"><label>Validade (meses)</label><input name="validade_meses" type="number" min="1" step="1" value="${m && m.validade_meses ? m.validade_meses : ''}" placeholder="12"></div>
+          <div class="campo"><label>Valor (R$)
+            ${dica('O preço do pacote fechado — é o que o cliente paga, no balcão ou pelo aplicativo. Ex.: 24 banhos por R$ 700,00.')}</label><input name="valor" inputmode="decimal" value="${m ? (m.valor_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="700,00" required></div>
+          <div class="campo"><label>Validade (meses)
+            ${dica('Prazo para usar os créditos, contado do dia da venda. Vencido, o sistema bloqueia a baixa e avisa. Deixe vazio para nunca vencer.')}</label><input name="validade_meses" type="number" min="1" step="1" value="${m && m.validade_meses ? m.validade_meses : ''}" placeholder="12"></div>
         </div>
         ${m ? `
         <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
@@ -1655,7 +1829,8 @@
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
           <div class="campo"><label>Preço (R$)</label><input name="preco" inputmode="decimal" value="${p ? (p.preco_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="250,00" required></div>
-          <div class="campo"><label>Estoque</label><input name="estoque" type="number" min="0" step="1" value="${p ? p.estoque : '0'}" required></div>
+          <div class="campo"><label>Estoque
+            ${dica('Quantas unidades você tem agora. Cada venda desconta sozinha, e o produto some da loja quando zera.')}</label><input name="estoque" type="number" min="0" step="1" value="${p ? p.estoque : '0'}" required></div>
         </div>
         <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
           <input type="checkbox" name="controla_estoque" ${!p || p.controla_estoque ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
@@ -1831,6 +2006,15 @@
   }
 
   /** Coloca a logo e o nome do petshop no topo do painel. */
+  function enderecoPublico() {
+    return `${window.location.origin}/${sessao.empresa.slug}`;
+  }
+
+  function textoConviteVitrine() {
+    return `Olá! Agora você acompanha os banhos, o saldo do pacote e agenda horário do seu pet pelo celular. ` +
+      `Crie a sua conta aqui: ${enderecoPublico()}`;
+  }
+
   function aplicarIdentidade() {
     if (!sessao) return;
     document.getElementById('nome-empresa').textContent = sessao.empresa.nome;
@@ -2065,9 +2249,11 @@
             <form id="form-empresa" style="display: flex; flex-direction: column; gap: 14px">
               <div class="rotulo-secao">Dados do petshop</div>
               <div class="campo"><label>Nome</label><input name="nome" value="${esc(emp.nome)}" required></div>
-              <div class="campo"><label>WhatsApp (usado no portal do cliente)</label>
+              <div class="campo"><label>WhatsApp (usado no portal do cliente)
+                ${dica('É o número do botão "Falar no WhatsApp" que o cliente vê no aplicativo. Só números, com DDD: 67999990000.')}</label>
                 <input name="whatsapp" value="${esc(emp.whatsapp || '')}" placeholder="67999999999"></div>
-              <div class="campo"><label>Endereço da sua página</label>
+              <div class="campo"><label>Endereço da sua página
+                ${dica('A página pública do seu petshop. Mande este link para o cliente: por ele a pessoa vê os serviços, os pacotes e cria a conta dela sozinha. Use só letras minúsculas, números e hífen.')}</label>
                 <div style="display: flex; align-items: center; gap: 2px">
                   <span style="font-size: 0.86rem; color: var(--text-muted); white-space: nowrap">${esc(BASE_PUBLICA)}/</span>
                   <input name="slug" value="${esc(emp.slug || '')}" placeholder="salvapatas" style="flex: 1; min-width: 0">
@@ -2092,6 +2278,7 @@
               <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
                 <input type="checkbox" name="aceita_online" ${emp.aceita_online ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
                 Deixar o cliente agendar e comprar pelo aplicativo
+                ${dica('Ligado: o cliente escolhe horário e compra pacote pelo celular, sem te ligar. Desligado: ele não agenda nem compra pacote pelo aplicativo — a Loja tem a própria chave, logo abaixo.')}
               </label>
               <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar</button>
             </form>
@@ -2103,11 +2290,14 @@
               <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer">
                 <input type="checkbox" name="vende_produtos" ${emp.vende_produtos ? 'checked' : ''} style="width: 17px; height: 17px; accent-color: var(--primary)">
                 Vender produtos pelo aplicativo
+                ${dica('Abre a Loja no aplicativo do cliente, com os produtos que você cadastrar. Precisa do Mercado Pago conectado logo abaixo — é ele que recebe o pagamento.')}
               </label>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
-                <div class="campo"><label>Taxa de entrega (R$)</label>
+                <div class="campo"><label>Taxa de entrega (R$)
+                  ${dica('Somada em cada pedido da loja entregue em casa. Deixe 0,00 para não cobrar entrega.')}</label>
                   <input name="taxa" inputmode="decimal" value="${(emp.taxa_entrega_centavos / 100).toFixed(2).replace('.', ',')}"></div>
-                <div class="campo"><label>Entrega grátis acima de (R$)</label>
+                <div class="campo"><label>Entrega grátis acima de (R$)
+                  ${dica('Pedidos a partir deste valor não pagam a taxa. Deixe vazio para a taxa valer sempre.')}</label>
                   <input name="gratis" inputmode="decimal" value="${emp.entrega_gratis_acima_centavos ? (emp.entrega_gratis_acima_centavos / 100).toFixed(2).replace('.', ',') : ''}" placeholder="deixe vazio para não ter"></div>
               </div>
               <button class="btn-primario" type="submit" style="align-self: flex-start">Salvar loja</button>
@@ -2121,11 +2311,14 @@
               <a href="https://www.mercadopago.com.br/developers/panel/app" target="_blank" rel="noopener">mercadopago.com.br/developers</a>:
               o <strong>access token de produção</strong> e, em Webhooks, a <strong>chave secreta</strong>.
             </p>
-            <div class="campo"><label>URL para colar no painel do Mercado Pago</label>
+            <div class="campo"><label>URL para colar no painel do Mercado Pago
+              ${dica('No site do Mercado Pago, em Webhooks, cole esta URL no campo de URL do modo produção e marque o evento Pagamentos. É por ela que o Mercado Pago nos avisa que o cliente pagou.')}</label>
               <input id="campo-webhook-url" readonly value="${esc(emp.url_webhook)}"></div>
-            <div class="campo"><label>Access token ${emp.mp_access_token_final ? `(salvo: ${esc(emp.mp_access_token_final)})` : '(não configurado)'}</label>
+            <div class="campo"><label>Access token ${emp.mp_access_token_final ? `(salvo: ${esc(emp.mp_access_token_final)})` : '(não configurado)'}
+              ${dica('No site do Mercado Pago: Suas integrações, sua aplicação, Credenciais de produção. Copie o Access Token — começa com APP_USR. Com ele, o dinheiro das vendas cai direto na SUA conta do Mercado Pago.')}</label>
               <input id="campo-mp-token" type="password" placeholder="APP_USR-…" autocomplete="off"></div>
-            <div class="campo"><label>Chave secreta do webhook ${emp.mp_webhook_configurado ? '(configurada)' : '(não configurada)'}</label>
+            <div class="campo"><label>Chave secreta do webhook ${emp.mp_webhook_configurado ? '(configurada)' : '(não configurada)'}
+              ${dica('Depois de salvar a URL acima no Mercado Pago, ele mostra uma "Assinatura secreta". Cole aqui. É ela que garante que o aviso de pagamento veio mesmo do Mercado Pago, e não de um golpista.')}</label>
               <input id="campo-mp-segredo" type="password" placeholder="cole a chave secreta" autocomplete="off"></div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap">
               <button class="btn-primario" id="botao-salvar-mp" type="button">Salvar credenciais</button>
@@ -2474,6 +2667,278 @@
     });
   }
 
+
+  // ═══ Ajuda ═══════════════════════════════════════════════════════
+  // Manual do usuário dentro do painel, organizado por tela, com busca.
+  // Página, não PDF: evolui junto com o produto.
+
+  function verAjuda(termoInicial) {
+    const endereco = sessao.empresa.slug ? enderecoPublico() : null;
+    const linkExemplo = endereco || `${window.location.origin}/nome-do-seu-petshop`;
+
+    const topicos = [
+      {
+        titulo: 'Primeiros passos',
+        corpo: `
+          <p>O SaferPet substitui o caderno de pacotes e coloca o seu petshop no celular do cliente.
+             A ordem que funciona:</p>
+          <ol>
+            <li><strong>Catálogo → Novo serviço.</strong> Cadastre banho, tosa e o que mais você faz,
+                cada um com a duração real. A duração monta a sua agenda.</li>
+            <li><strong>Catálogo → Novo modelo.</strong> Monte os pacotes que você já vende
+                — por exemplo, 24 banhos por R$ 700 — com preço e validade.</li>
+            <li><strong>Configurações.</strong> Ligue "Deixar o cliente agendar e comprar pelo aplicativo"
+                e escolha o endereço da sua página.</li>
+            <li><strong>Configurações → Pagamento online.</strong> Conecte o seu Mercado Pago para o
+                cliente pagar pelo celular. O dinheiro cai direto na sua conta.</li>
+            <li><strong>Clientes.</strong> Cadastre quem já é cliente — ou mande o endereço da sua
+                página e deixe cada um criar a própria conta.</li>
+          </ol>
+          <div class="nota">A Visão geral mostra o que ainda falta desses passos e o que o seu
+            cliente já consegue ver no aplicativo.</div>`,
+      },
+      {
+        titulo: 'Visão geral',
+        corpo: `
+          <p>É a tela de chegada: o resumo do dia e o que precisa da sua atenção.</p>
+          <ul>
+            <li><strong>Confirmação de cliente</strong> — quando alguém cria conta com um telefone que
+                já está no seu cadastro, o pedido aparece aqui. Confirme apenas se for mesmo o seu
+                cliente: quem você aprovar passa a ver todo o histórico daquela ficha. Na dúvida,
+                ligue para o número antes de aprovar.</li>
+            <li><strong>Ativação do aplicativo</strong> — os passos que faltam para o cliente conseguir
+                agendar e comprar. Some sozinho quando tudo estiver pronto.</li>
+            <li><strong>Agendados hoje, buscas e entregas, créditos usados</strong> — os números do dia.</li>
+            <li><strong>Saldos acabando</strong> — pacotes ativos com 3 créditos ou menos. É a hora
+                de oferecer o próximo pacote.</li>
+          </ul>`,
+      },
+      {
+        titulo: 'Agenda',
+        corpo: `
+          <p>A agenda mostra o dia em colunas de horário, como um mapa do expediente.</p>
+          <ul>
+            <li><strong>Agendar:</strong> clique em um horário vago (ou no botão Agendar da ficha do
+                cliente). Os horários oferecidos respeitam a duração do serviço e o seu expediente.</li>
+            <li><strong>Leva-e-traz:</strong> ao marcar com busca e entrega, o veículo entra na agenda
+                como um recurso — o sistema não deixa duas buscas no mesmo horário.</li>
+            <li><strong>Concluir:</strong> ao concluir um serviço, o crédito do pacote baixa sozinho.
+                Se o cliente não tem crédito daquele serviço, o sistema avisa para cobrar na hora.</li>
+            <li><strong>Faltou:</strong> registra a falta sem consumir crédito.</li>
+            <li><strong>Foto do pet pronto:</strong> na conclusão dá para enviar uma foto — o cliente
+                recebe no aplicativo. É o momento que mais encanta.</li>
+          </ul>
+          <p>O expediente (dias e horários de funcionamento) se ajusta em
+             <strong>Configurações</strong>, incluindo pausas e exceções de feriado.</p>`,
+      },
+      {
+        titulo: 'Clientes e pacotes',
+        corpo: `
+          <p>Cada cliente tem uma ficha com os pets, os pacotes e todo o histórico.</p>
+          <ul>
+            <li><strong>Vender pacote:</strong> escolha o modelo e pronto — os créditos entram na conta
+                do cliente. Pagamento no balcão é com você; pelo aplicativo, o crédito entra sozinho
+                quando o Mercado Pago confirma.</li>
+            <li><strong>Dar baixa:</strong> desconta um crédito na hora (o caminho rápido do balcão,
+                sem passar pela agenda). Se o cliente tem mais de um pacote, o sistema usa primeiro
+                o mais antigo.</li>
+            <li><strong>Estorno:</strong> desfaz uma baixa errada. A equipe estorna no mesmo dia;
+                depois disso, só o administrador. Registros nunca somem — o estorno fica marcado
+                no histórico.</li>
+            <li><strong>Pacote vencido:</strong> o sistema bloqueia a baixa e avisa. O administrador
+                pode reativar pela ficha, se quiser abrir exceção.</li>
+          </ul>
+          <div class="nota">O telefone identifica o cliente no aplicativo — por isso cada cliente
+            precisa de um número diferente. Se dois dividem o mesmo celular, cadastre o segundo
+            sem telefone ou com outro número.</div>`,
+      },
+      {
+        titulo: 'O aplicativo do seu cliente',
+        corpo: `
+          <p>O cliente tem duas portas de entrada, e as duas levam ao mesmo lugar:</p>
+          <ul>
+            <li><strong>O link individual</strong> — está na ficha de cada cliente ("Link do portal").
+                Abre direto, sem senha. Bom para quem você mesmo cadastrou no balcão.</li>
+            <li><strong>A conta própria</strong> — na sua página pública
+                (${endereco ? `<strong>${esc(endereco)}</strong>` : `<strong>${esc(linkExemplo)}</strong>, definida em Configurações`}),
+                o cliente cria conta com telefone e senha e entra quando quiser.</li>
+          </ul>
+          <p>No aplicativo, o cliente vê o saldo dos pacotes, agenda horário, compra pacote, acompanha
+             o leva-e-traz, compra na loja e recebe as fotos do pet pronto.</p>
+          <p><strong>Se o telefone já estiver no seu cadastro</strong>, a conta não abre sozinha:
+             chega um pedido de confirmação na sua Visão geral. Isso protege o histórico — sem a sua
+             confirmação, ninguém assume a ficha de outra pessoa.</p>
+          <p><strong>Cliente perdeu o link?</strong> Abra a ficha dele → Link do portal → Enviar por
+             WhatsApp. Ou gere um novo link, que cancela o antigo.</p>`,
+      },
+      {
+        titulo: 'Catálogo: serviços e modelos de pacote',
+        corpo: `
+          <p><strong>Serviços</strong> são o que você faz: banho, tosa, hidratação. Cada um tem:</p>
+          <ul>
+            <li><strong>Duração</strong> — o tempo que o serviço ocupa na agenda. O aplicativo só
+                oferece horários em que ele cabe inteiro, sem atropelar o próximo.</li>
+            <li><strong>Preço avulso</strong> — o valor de uma vez só, para quem não tem pacote.</li>
+          </ul>
+          <p><strong>Modelos de pacote</strong> são as ofertas: quais serviços entram, quantas vezes,
+             por quanto e com qual validade. O modelo é o molde; a venda cria o pacote do cliente.</p>
+          <div class="nota">Mudar um modelo não mexe nos pacotes já vendidos — cliente que comprou
+            mantém exatamente o que comprou.</div>`,
+      },
+      {
+        titulo: 'Loja e entregas',
+        corpo: `
+          <p>A loja vende ração, shampoo, acessórios — direto no aplicativo do cliente.</p>
+          <ul>
+            <li><strong>Produto</strong> tem nome, foto, preço e estoque. Quando o estoque zera, o
+                produto some da loja sozinho (desligue "controlar estoque" para itens sob encomenda).</li>
+            <li><strong>Pedido</strong> aparece na aba Loja assim que o cliente fecha a compra, como
+                "aguardando pagamento" — e muda sozinho para pago quando o Mercado Pago confirma.
+                Daí você separa, e a entrega entra na rota do leva-e-traz — ou o cliente retira
+                no balcão.</li>
+            <li><strong>Taxa de entrega</strong> se ajusta em Configurações, com valor mínimo para
+                entrega grátis se você quiser.</li>
+          </ul>
+          <p>Os pedidos aparecem na aba Loja, do mais recente para o mais antigo, com a situação de
+             cada um.</p>`,
+      },
+      {
+        titulo: 'Pagamento online (Mercado Pago)',
+        corpo: `
+          <p>Com o Mercado Pago conectado, o cliente compra pacote e produtos pelo celular e
+             <strong>o dinheiro cai direto na conta do petshop</strong> — a SaferSoftware não passa
+             pelo meio. Conectar leva uns 10 minutos:</p>
+          <ol>
+            <li>Crie (ou entre na) sua conta em <strong>mercadopago.com.br</strong>.</li>
+            <li>Acesse <strong>mercadopago.com.br/developers</strong> → Suas integrações →
+                Criar aplicação (qualquer nome, por exemplo "SaferPet").</li>
+            <li>Na aplicação, abra <strong>Credenciais de produção</strong> e copie o
+                <strong>Access Token</strong> (começa com APP_USR).</li>
+            <li>Cole em Configurações → Pagamento online → Access token.</li>
+            <li>Ainda na aplicação, abra <strong>Webhooks → Configurar notificações</strong>: cole a
+                URL que aparece em Configurações, marque o evento <strong>Pagamentos</strong> e salve.</li>
+            <li>O Mercado Pago mostra uma <strong>assinatura secreta</strong> — cole no campo
+                "Chave secreta do webhook" e salve.</li>
+          </ol>
+          <p>Pronto: quando as duas credenciais estiverem salvas, Configurações mostra
+             "Pagamento online ativo" — e o botão de comprar aparece para o cliente.</p>
+          <div class="nota">Cliente pagou e o crédito não apareceu? O sistema confere os pagamentos
+            pendentes sozinho em até 20 minutos. Se não resolver depois disso, confira se a
+            assinatura secreta do webhook está igual à do painel do Mercado Pago.</div>`,
+      },
+      {
+        titulo: 'Assinatura do SaferPet',
+        corpo: `
+          <p>O SaferPet é assinado por mensalidade: R$ 149 por mês ou R$ 1.490 por ano
+             (dois meses grátis). Os primeiros 14 dias são de teste, sem pagar nada.</p>
+          <ul>
+            <li>A aba <strong>Assinatura</strong> mostra até quando vai o seu acesso e renova com
+                cartão ou Pix, pelo Mercado Pago.</li>
+            <li>Renovar antes de vencer <strong>soma</strong> os dias — você nunca perde o que pagou.</li>
+            <li>Se vencer, os dados ficam guardados: nada se perde, e tudo volta ao normal na
+                renovação.</li>
+          </ul>`,
+      },
+      {
+        titulo: 'Perguntas frequentes',
+        corpo: `
+          <p class="ajuda-pergunta">Posso usar no celular?</p>
+          <p>Sim — o painel e o aplicativo do cliente funcionam no navegador do celular, sem
+             instalar nada.</p>
+          <p class="ajuda-pergunta">O cliente esqueceu a senha da conta dele. E agora?</p>
+          <p>Mande o link individual da ficha dele por WhatsApp — o link abre sem senha e resolve na
+             hora. Se ele fizer questão da senha: na ficha dele, <strong>Desconectar conta</strong>,
+             e ele cria a conta de novo com uma senha nova (você confirma o pedido na Visão geral).</p>
+          <p class="ajuda-pergunta">Aprovei uma confirmação de cliente por engano.</p>
+          <p>Abra a ficha do cliente → Link do portal → <strong>Desconectar conta</strong>. A sessão
+             de quem entrou cai na hora, e a pessoa só volta criando a conta de novo — o que pede a
+             sua confirmação outra vez. Se ela também tiver o link individual, gere um novo link.</p>
+          <p class="ajuda-pergunta">Quero tirar um produto da loja sem apagar.</p>
+          <p>Edite o produto e desmarque "À venda no aplicativo". Ele sai da loja e continua no seu
+             cadastro.</p>
+          <p class="ajuda-pergunta">Registrei uma baixa errada.</p>
+          <p>Na ficha do cliente, o botão de estorno desfaz a baixa no mesmo dia. Depois disso, só
+             o administrador consegue estornar.</p>
+          <p class="ajuda-pergunta">O horário que o cliente queria não aparece para ele.</p>
+          <p>Confira o expediente em Configurações e a duração do serviço no Catálogo — o aplicativo
+             só oferece horários que cabem inteiros dentro do expediente, descontando o que já está
+             marcado.</p>`,
+      },
+      {
+        titulo: 'Como apresentar o aplicativo ao seu cliente',
+        corpo: `
+          <p>Você vai ser a primeira linha de ajuda dos seus clientes. Um jeito simples de
+             apresentar, na entrega ou pelo WhatsApp:</p>
+          <p style="font-style: italic">"Agora você acompanha tudo do seu pet pelo celular: o saldo
+             dos banhos, os horários e as fotos de quando ele fica pronto. É só criar a sua conta
+             neste link — leva um minuto e não precisa instalar nada."</p>
+          ${endereco ? `
+          <p>Mensagem pronta para copiar e mandar no WhatsApp:</p>
+          <div class="campo"><textarea id="ajuda-convite" rows="3" readonly
+            style="resize: none">${esc(textoConviteVitrine())}</textarea></div>
+          <button class="btn-primario btn-mini" id="ajuda-copiar-convite" type="button"
+            style="align-self: flex-start">Copiar mensagem</button>` : `
+          <div class="nota">Defina o endereço da sua página em Configurações para ter o link de
+            convite pronto para enviar.</div>`}
+          <p>Para quem você já cadastrou no balcão, o caminho mais curto é a própria ficha do
+             cliente: <strong>Link do portal → Enviar por WhatsApp</strong> — abre sem senha.</p>`,
+      },
+    ];
+
+    conteudo.innerHTML = `
+      <div class="cabecalho-pagina">
+        <h2>Ajuda</h2>
+        <p>Como usar cada parte do SaferPet — e as respostas para as dúvidas mais comuns</p>
+      </div>
+      <input class="busca" id="ajuda-busca" type="search"
+             placeholder="Buscar na ajuda (ex.: webhook, estorno, validade)" value="${esc(termoInicial || '')}">
+      <div class="lista" id="ajuda-lista">
+        ${topicos.map((t, i) => `
+          <details class="ajuda-topico" data-indice="${i}">
+            <summary>${esc(t.titulo)}</summary>
+            <div class="ajuda-corpo">${t.corpo}</div>
+          </details>`).join('')}
+        <div class="vazio ajuda-sem-resultado" id="ajuda-vazio">
+          Nada encontrado com esse termo.<br>
+          Não achou a resposta? Fale com a SaferSoftware — a ajuda cresce com as suas perguntas.
+        </div>
+      </div>`;
+
+    // "duracao" tem que achar "duração": compara tudo sem acento.
+    const semAcento = (texto) => texto.toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const caixas = [...conteudo.querySelectorAll('.ajuda-topico')];
+    const textos = caixas.map(c => semAcento(c.textContent));
+
+    function filtrar(termo) {
+      const t = semAcento(termo.trim());
+      let visiveis = 0;
+      caixas.forEach((caixa, i) => {
+        const bate = !t || textos[i].includes(t);
+        caixa.style.display = bate ? '' : 'none';
+        if (bate) visiveis += 1;
+        // Com termo, abre o tópico para a resposta aparecer; sem termo, recolhe.
+        if (t && bate) caixa.setAttribute('open', '');
+        else if (!t) caixa.removeAttribute('open');
+      });
+      document.getElementById('ajuda-vazio').style.display = visiveis ? 'none' : 'block';
+    }
+
+    const campoBusca = document.getElementById('ajuda-busca');
+    campoBusca.addEventListener('input', () => filtrar(campoBusca.value));
+    if (termoInicial) filtrar(termoInicial);
+
+    const copiarConvite = document.getElementById('ajuda-copiar-convite');
+    if (copiarConvite) copiarConvite.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(textoConviteVitrine()); toast('Mensagem copiada.'); }
+      catch (_e) {
+        document.getElementById('ajuda-convite').select();
+        document.execCommand('copy');
+        toast('Mensagem copiada.');
+      }
+    });
+  }
+
   // ═══ Roteador ════════════════════════════════════════════════════
 
   function marcarAba(rota) {
@@ -2490,11 +2955,16 @@
     const [rota, parametro] = hash.split('/');
     marcarAba(hash);
 
-    if (sessao && !sessao.empresa.acesso_vigente) {
+    // Acesso vencido bloqueia a operação, mas NUNCA a renovação nem a
+    // ajuda — senão o petshop fica trancado do lado de fora da solução.
+    if (sessao && !sessao.empresa.acesso_vigente && rota !== 'assinatura' && rota !== 'ajuda') {
       conteudo.innerHTML = `
-        <div class="faixa-aviso">
-          O acesso do petshop ao SaferPet expirou em ${dataLonga(sessao.empresa.acesso_ate)}.
-          Fale com a SaferSoftware para renovar — os dados estão guardados e voltam ao normal na renovação.
+        <div class="faixa-aviso" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+          <div style="flex: 1; min-width: 240px">
+            O acesso do petshop ao SaferPet venceu em ${dataLonga(sessao.empresa.acesso_ate)}.
+            Os dados estão guardados — tudo volta ao normal na renovação.
+          </div>
+          <a class="btn-primario btn-mini" href="#/assinatura" style="text-decoration: none">Renovar agora</a>
         </div>`;
       return;
     }
@@ -2508,6 +2978,7 @@
       else if (rota === 'relatorios') await verRelatorios();
       else if (rota === 'assinatura') await verAssinatura();
       else if (rota === 'config') await verConfig();
+      else if (rota === 'ajuda') verAjuda();
       else await verVisao();
     } catch (err) {
       if (err.status === 402) {

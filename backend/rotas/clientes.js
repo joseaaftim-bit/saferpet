@@ -133,7 +133,7 @@ router.get('/:id', async (req, res, next) => {
     if (!Number.isInteger(clienteId)) return res.status(404).json({ erro: 'Cliente não encontrado.' });
 
     const rc = await executeQuery(
-      `SELECT id, nome, telefone, email, endereco, observacoes, token_portal, criado_em
+      `SELECT id, nome, telefone, email, endereco, observacoes, token_portal, conta_ativa, criado_em
          FROM clientes WHERE id = $1 AND empresa_id = $2 AND ativo`,
       [clienteId, req.usuario.empresa_id]
     );
@@ -285,6 +285,35 @@ router.post('/:id/regenerar-token', somenteAdmin, async (req, res, next) => {
     );
     if (!r.recordset.length) return res.status(404).json({ erro: 'Cliente não encontrado.' });
     res.json({ token_portal: token, link_portal: linkPortal(token) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Desconecta a conta do aplicativo (telefone e senha). Vale para o
+// "aprovei o vínculo errado": a sessão cai na hora — porSessao recusa
+// cliente com conta_ativa desligada — e a pessoa só volta criando conta
+// de novo, o que exige nova confirmação do petshop.
+router.post('/:id/desconectar-conta', somenteAdmin, async (req, res, next) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(clienteId)) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+    const r = await executeQuery(
+      `UPDATE clientes SET conta_ativa = FALSE, senha_hash = NULL
+        WHERE id = $1 AND empresa_id = $2 AND ativo RETURNING id`,
+      [clienteId, req.usuario.empresa_id]
+    );
+    if (!r.recordset.length) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+
+    // Pedido de confirmação que ficou na fila morre junto — senão uma
+    // aprovação distraída depois reativaria a conta com a senha de quem
+    // acabou de ser desconectado.
+    await executeQuery(
+      `UPDATE vinculos_pendentes SET status = 'RECUSADO', decidido_em = NOW(), decidido_por = $1
+        WHERE cliente_id = $2 AND empresa_id = $3 AND status = 'PENDENTE'`,
+      [req.usuario.id, clienteId, req.usuario.empresa_id]
+    );
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

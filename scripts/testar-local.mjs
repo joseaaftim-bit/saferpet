@@ -1352,6 +1352,73 @@ try {
     });
     verificar('não dá para decidir o mesmo pedido duas vezes', decidirDeNovo.status === 409);
 
+    // "Aprovei o vínculo errado": desconectar derruba a conta na hora e
+    // obriga o ciclo completo de novo (criar conta → petshop confirmar).
+    const desconectar = await chamar('POST', `/api/clientes/${lista.dados[0].cliente_id}/desconectar-conta`, {
+      token: tokenA,
+    });
+    verificar('petshop desconecta a conta do cliente', desconectar.status === 200);
+
+    const sessaoDerrubada = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${depoisAprovar.dados.token}` },
+    });
+    verificar('a sessão desconectada não abre mais o app', sessaoDerrubada.status === 404);
+
+    const loginDerrubado = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67988887777', senha: 'senha-do-invasor',
+    }});
+    verificar('a senha desconectada não entra mais', loginDerrubado.status === 401);
+
+    const recadastro = await chamar('POST', '/api/vitrine/salva-patas/conta', { corpo: {
+      nome: 'Mariana de volta', telefone: '67988887777', senha: 'senha-nova-123',
+    }});
+    verificar('recriar a conta volta a exigir a confirmação do petshop',
+      recadastro.status === 202 && recadastro.dados.pendente === true,
+      JSON.stringify(recadastro.dados).slice(0, 120));
+
+    const atendenteDesconecta = await chamar('POST', `/api/clientes/${lista.dados[0].cliente_id}/desconectar-conta`, {
+      token: tokenAt,
+    });
+    verificar('atendente não desconecta conta (403)', atendenteDesconecta.status === 403);
+
+    // O ciclo fecha: aprovar o novo pedido dá acesso com a senha NOVA —
+    // e o crachá de antes da reativação continua morto.
+    const lista2 = await chamar('GET', '/api/empresa/vinculos', { token: tokenA });
+    verificar('o novo pedido aparece para confirmar (o antigo morreu junto com a conta)',
+      lista2.status === 200 && lista2.dados.length === 1 &&
+      lista2.dados[0].nome === 'Mariana de volta',
+      JSON.stringify(lista2.dados).slice(0, 120));
+
+    await chamar('PUT', `/api/empresa/vinculos/${lista2.dados[0].id}`, {
+      token: tokenA, corpo: { acao: 'APROVAR' },
+    });
+    const entrou2 = await chamar('POST', '/api/vitrine/salva-patas/entrar', { corpo: {
+      telefone: '67988887777', senha: 'senha-nova-123',
+    }});
+    verificar('aprovado de novo, a senha nova entra', entrou2.status === 200 && !!entrou2.dados.token);
+
+    // Crachá forjado com iat de 1h atrás (assinatura válida): é o crachá
+    // de 30 dias do impostor desconectado — reativar a conta NÃO pode
+    // ressuscitá-lo.
+    const jwtLib = require('jsonwebtoken');
+    const crachaVelho = jwtLib.sign({
+      tipo: 'cliente',
+      cliente_id: lista2.dados[0].cliente_id,
+      empresa_id: 1,
+      iat: Math.floor(Date.now() / 1000) - 3600,
+    }, 'segredo-de-teste');
+    const velhoNoApp = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${crachaVelho}` },
+    });
+    verificar('crachá emitido antes da reativação não volta a valer',
+      velhoNoApp.status === 404, `status ${velhoNoApp.status}`);
+
+    const novoNoApp = await fetch(`${base}/api/portal/conta`, {
+      headers: { Authorization: `Bearer ${entrou2.dados.token}` },
+    });
+    verificar('o crachá novo abre normalmente', novoNoApp.status === 200);
+
+
 
     // O telefone virou login: dois clientes com o mesmo número deixariam
     // a entrada ambígua. Mas cadastro antigo duplicado não pode travar o

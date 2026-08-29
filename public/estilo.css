@@ -343,3 +343,62 @@ a:hover { color: var(--primary); }
   .vitrine-capa h1 { font-size: 1.9rem; }
   .vitrine-produtos { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
 }
+
+/* ─── Dica de campo (o "?" ao lado do rótulo) ─── */
+.dica {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 999px; flex-shrink: 0;
+  border: 1px solid var(--border-strong); background: var(--bg-inset);
+  color: var(--text-muted); font-size: 0.68rem; font-weight: 700;
+  cursor: help; padding: 0; line-height: 1; vertical-align: middle;
+}
+.dica:hover, .dica:focus-visible { border-color: var(--primary); color: var(--primary-ink); }
+.dica:focus-visible { outline: 2px solid var(--primary-border); outline-offset: 1px; }
+
+.dica-balao {
+  position: fixed; z-index: 200; max-width: 300px;
+  background: var(--text-main); color: var(--bg-base);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 0.82rem; font-weight: 500; line-height: 1.55;
+  box-shadow: var(--shadow-card); pointer-events: none;
+}
+
+/* Rótulo com dica ao lado */
+.campo label { display: flex; align-items: center; gap: 6px; }
+
+/* ─── Boas-vindas (primeiro acesso) ─── */
+.boasvindas-passos { display: flex; flex-direction: column; gap: 10px; }
+.boasvindas-passo { display: flex; align-items: baseline; gap: 12px; font-size: 0.92rem; }
+.boasvindas-numero {
+  font-family: var(--fonte-titulo); font-weight: 550; font-size: 1.05rem;
+  color: var(--primary-ink); min-width: 20px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.boasvindas-passo small { display: block; color: var(--text-muted); font-size: 0.82rem; margin-top: 1px; }
+
+/* ─── Ajuda ─── */
+.ajuda-topico { border: 1px solid var(--border); border-radius: 14px; background: var(--bg-panel); }
+.ajuda-topico summary {
+  list-style: none; cursor: pointer; padding: 16px 20px;
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--fonte-titulo); font-weight: 550; font-size: 1.08rem;
+}
+.ajuda-topico summary::-webkit-details-marker { display: none; }
+.ajuda-topico summary::after {
+  content: ''; margin-left: auto; width: 8px; height: 8px; flex-shrink: 0;
+  border-right: 2px solid var(--text-subtle); border-bottom: 2px solid var(--text-subtle);
+  transform: rotate(45deg); transition: transform 0.2s ease;
+}
+.ajuda-topico[open] summary::after { transform: rotate(225deg); }
+.ajuda-topico[open] summary { border-bottom: 1px solid var(--border); }
+.ajuda-corpo { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px; }
+.ajuda-corpo p, .ajuda-corpo li { font-size: 0.9rem; line-height: 1.65; color: var(--text-main); }
+.ajuda-corpo p strong { font-weight: 650; }
+.ajuda-corpo ol, .ajuda-corpo ul { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.ajuda-corpo .nota {
+  background: var(--primary-soft); border: 1px solid var(--primary-border);
+  border-radius: 10px; padding: 10px 14px; font-size: 0.85rem; color: var(--primary-ink);
+  line-height: 1.55;
+}
+.ajuda-pergunta { font-weight: 650; font-size: 0.92rem; margin-top: 4px; }
+.ajuda-sem-resultado { display: none; }

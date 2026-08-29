@@ -179,6 +179,8 @@ router.get('/me', validarJwt, (req, res) => {
       plano: req.empresa.plano,
       acesso_ate: req.empresa.acesso_ate,
       acesso_vigente: new Date(req.empresa.acesso_ate).getTime() >= Date.now(),
+      // O front monta o endereço público (convite dos clientes) com isto.
+      slug: req.empresa.slug,
     },
   });
 });

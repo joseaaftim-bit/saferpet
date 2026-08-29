@@ -14,7 +14,7 @@ const {
   criarPreferencia, consultarPagamento, buscarPagamentosPorReferencia, validarAssinatura,
 } = require('../util/mercadopago');
 const { hojeSaoPaulo, somarMeses } = require('../util/datas');
-const { idDaSessao } = require('../middlewares/clienteAuth');
+const { payloadDaSessao, crachaAnteriorAConta } = require('../middlewares/clienteAuth');
 
 const router = express.Router();
 
@@ -41,7 +41,7 @@ const limiteCompra = rateLimit({
 // Carrega o cliente com a empresa e as credenciais de pagamento dela.
 async function carregarCliente(where, params) {
   const r = await executeQuery(
-    `SELECT c.id, c.nome, c.email, c.endereco, c.empresa_id, c.conta_ativa,
+    `SELECT c.id, c.nome, c.email, c.endereco, c.empresa_id, c.conta_ativa, c.conta_criada_em,
             e.nome AS empresa_nome, e.acesso_ate, e.ativo AS empresa_ativa,
             e.aceita_online, e.mp_access_token, e.mp_webhook_secret
        FROM clientes c
@@ -65,10 +65,12 @@ async function clienteDaRequisicao(req) {
   const bruto = req.params && req.params.token;
   if (bruto && bruto !== 'conta') return clientePorToken(String(bruto));
 
-  const clienteId = idDaSessao(req.headers.authorization);
-  if (!clienteId) return null;
-  const cliente = await carregarCliente('c.id = $1', [clienteId]);
-  return cliente && cliente.conta_ativa ? cliente : null;
+  const payload = payloadDaSessao(req.headers.authorization);
+  if (!payload) return null;
+  const cliente = await carregarCliente('c.id = $1', [payload.cliente_id]);
+  if (!cliente || !cliente.conta_ativa) return null;
+  if (crachaAnteriorAConta(payload, cliente)) return null;
+  return cliente;
 }
 
 // Para onde o Mercado Pago devolve o cliente depois de pagar.

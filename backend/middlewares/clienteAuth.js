@@ -11,7 +11,7 @@ const { JWT_SECRET } = require('../config/segredos');
 const { executeQuery } = require('../database');
 
 const CAMPOS_CLIENTE = `c.id, c.nome, c.telefone, c.email, c.endereco, c.empresa_id,
-            c.conta_ativa,
+            c.conta_ativa, c.conta_criada_em,
             e.nome AS petshop_nome, e.whatsapp AS petshop_whatsapp, e.slug,
             e.acesso_ate, e.ativo AS empresa_ativa, e.aceita_online,
             e.mp_access_token, e.mp_webhook_secret,
@@ -45,8 +45,8 @@ async function porTokenDoPortal(token) {
   return carregarCliente('c.token_portal = $1', [token]);
 }
 
-/** Só valida o crachá da sessão e devolve o id do cliente. */
-function idDaSessao(autorizacao) {
+/** Só valida o crachá da sessão e devolve o payload inteiro. */
+function payloadDaSessao(autorizacao) {
   const bruto = String(autorizacao || '');
   const token = bruto.startsWith('Bearer ') ? bruto.slice(7) : null;
   if (!token) return null;
@@ -59,18 +59,36 @@ function idDaSessao(autorizacao) {
   }
   // Um token do PAINEL não abre a conta do cliente, e vice-versa.
   if (payload.tipo !== 'cliente' || !payload.cliente_id) return null;
-  return payload.cliente_id;
+  return payload;
+}
+
+/** Compatível com quem só precisa do id. */
+function idDaSessao(autorizacao) {
+  const payload = payloadDaSessao(autorizacao);
+  return payload ? payload.cliente_id : null;
 }
 
 /** Resolve pela sessão da conta (telefone e senha). */
 async function porSessao(autorizacao) {
-  const clienteId = idDaSessao(autorizacao);
-  if (!clienteId) return null;
+  const payload = payloadDaSessao(autorizacao);
+  if (!payload) return null;
 
-  const cliente = await carregarCliente('c.id = $1', [clienteId]);
+  const cliente = await carregarCliente('c.id = $1', [payload.cliente_id]);
   if (!cliente || cliente.indisponivel) return cliente;
   if (!cliente.conta_ativa) return null;   // conta desativada depois do login
+  if (crachaAnteriorAConta(payload, cliente)) return null;
   return cliente;
+}
+
+/**
+ * Crachá emitido ANTES da (re)criação da conta não vale. Sem isto, o
+ * crachá de 30 dias de alguém desconectado voltaria a abrir a conta
+ * quando ela fosse reativada por uma nova aprovação do petshop.
+ * Tolerância de 60s cobre o crachá emitido no próprio cadastro.
+ */
+function crachaAnteriorAConta(payload, cliente) {
+  if (!cliente.conta_criada_em || !payload.iat) return false;
+  return payload.iat * 1000 < new Date(cliente.conta_criada_em).getTime() - 60 * 1000;
 }
 
 /**
@@ -98,5 +116,6 @@ function autenticarCliente(req, res, next) {
 }
 
 module.exports = {
-  gerarTokenCliente, porTokenDoPortal, porSessao, idDaSessao, autenticarCliente, carregarCliente,
+  gerarTokenCliente, porTokenDoPortal, porSessao, idDaSessao, payloadDaSessao,
+  crachaAnteriorAConta, autenticarCliente, carregarCliente,
 };
