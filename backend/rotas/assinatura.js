@@ -10,7 +10,7 @@ const { somenteAdmin, validarJwt } = require('../middlewares/autenticacao');
 const { MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, APP_URL } = require('../config/segredos');
 const { planoDe, listarPlanos } = require('../config/planos');
 const {
-  criarPreferencia, consultarPagamento, buscarPagamentosDaPreferencia, validarAssinatura,
+  criarPreferencia, consultarPagamento, buscarPagamentosPorReferencia, validarAssinatura,
 } = require('../util/mercadopago');
 
 const router = express.Router();
@@ -296,7 +296,7 @@ async function reconciliarAssinaturas(limiteMinutos = 10) {
   let recuperadas = 0;
   for (const linha of r.recordset) {
     try {
-      const encontrados = await buscarPagamentosDaPreferencia(MP_ACCESS_TOKEN, linha.mp_preference_id);
+      const encontrados = await buscarPagamentosPorReferencia(MP_ACCESS_TOKEN, `assinatura:${linha.id}`);
       const aprovado = encontrados.find(p => p.status === 'approved');
       if (!aprovado) continue;
       await processarAssinatura(String(aprovado.id));

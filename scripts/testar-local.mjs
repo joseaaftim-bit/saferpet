@@ -119,8 +119,10 @@ mpFalso.consultarPagamento = async (_token, paymentId) => {
   if (!pgto) throw new Error('pagamento não encontrado (simulado)');
   return pgto;
 };
-mpFalso.buscarPagamentosDaPreferencia = async (_token, preferenceId) =>
-  [...pagamentosSimulados.values()].filter(p => p.preference_id === preferenceId);
+// Espelha a busca real: o Mercado Pago filtra por external_reference
+// (preference_id NÃO é filtro válido em /v1/payments/search).
+mpFalso.buscarPagamentosPorReferencia = async (_token, referencia) =>
+  [...pagamentosSimulados.values()].filter(p => p.external_reference === referencia);
 
 const { app } = require(path.join(raiz, 'backend', 'server.js'));
 const motor = require(path.join(raiz, 'backend', 'util', 'agenda.js'));
@@ -1152,10 +1154,61 @@ try {
       planos.planoDe('MENSAL').dias === 30 && planos.planoDe('ANUAL').dias === 365 &&
       planos.planoDe('inexistente') === null);
 
+
+
+    // A rede de segurança do dinheiro: quando o webhook não chega, a
+    // reconciliação precisa achar o pagamento pela referência que nós
+    // mesmos gravamos — o Mercado Pago NÃO aceita busca por preference_id.
+    // Aqui o módulo é recarregado com as credenciais globais, para exercitar
+    // o caminho que os testes de "sem credencial" acima não alcançam.
+    {
+      process.env.MP_ACCESS_TOKEN = 'APP_USR-global-simulado';
+      process.env.MP_WEBHOOK_SECRET = 'c'.repeat(64);
+      const caminhoSegredos = require.resolve(path.join(raiz, 'backend', 'config', 'segredos.js'));
+      const caminhoAssinatura = require.resolve(path.join(raiz, 'backend', 'rotas', 'assinatura.js'));
+      delete require.cache[caminhoSegredos];
+      delete require.cache[caminhoAssinatura];
+      const comMP = require(caminhoAssinatura);
+
+      const antes = await pool.query('SELECT plano, acesso_ate FROM empresas WHERE id = 1');
+      const antesAcesso = antes;
+      const pend = await pool.query(
+        `INSERT INTO assinaturas (empresa_id, plano, periodo, valor_centavos, status,
+                                  mp_preference_id, criado_em)
+         VALUES (1, 'PRO', 'MENSAL', 14900, 'PENDENTE', 'pref-sem-webhook', NOW() - INTERVAL '2 hours')
+         RETURNING id`);
+      const idPend = pend.rows[0].id;
+      pagamentosSimulados.set('pay-sem-webhook', {
+        id: 'pay-sem-webhook', status: 'approved',
+        external_reference: `assinatura:${idPend}`,
+        transaction_amount: 149, preference_id: 'pref-sem-webhook',
+      });
+
+      const recuperadas = await comMP.reconciliarAssinaturas(10);
+      const depoisPend = await pool.query('SELECT status FROM assinaturas WHERE id = $1', [idPend]);
+      const depoisAcesso = await pool.query('SELECT acesso_ate FROM empresas WHERE id = 1');
+      verificar('assinatura paga sem webhook é recuperada pela reconciliação',
+        recuperadas === 1 && depoisPend.rows[0].status === 'APROVADO' &&
+        new Date(depoisAcesso.rows[0].acesso_ate) > new Date(antesAcesso.rows[0].acesso_ate),
+        JSON.stringify({ recuperadas, status: depoisPend.rows[0] && depoisPend.rows[0].status }));
+
+      // Devolve o mundo ao estado anterior: os testes seguintes contam
+      // com este petshop ainda em trial.
+      await pool.query('UPDATE empresas SET plano = $1, acesso_ate = $2 WHERE id = 1',
+        [antes.rows[0].plano, antes.rows[0].acesso_ate]);
+      await pool.query('DELETE FROM assinaturas WHERE id = $1', [idPend]);
+      pagamentosSimulados.delete('pay-sem-webhook');
+
+      delete process.env.MP_ACCESS_TOKEN;
+      delete process.env.MP_WEBHOOK_SECRET;
+      delete require.cache[caminhoSegredos];
+      delete require.cache[caminhoAssinatura];
+    }
+
     // Reconciliação não pode travar na cabeça da fila com PENDENTE morto.
-    const rotaAssinatura = require(path.join(raiz, 'backend', 'rotas', 'assinatura.js'));
     await pool.query(`INSERT INTO assinaturas (empresa_id, plano, periodo, valor_centavos, status, mp_preference_id, criado_em)
       VALUES (1, 'PRO', 'MENSAL', 14900, 'PENDENTE', 'pref-morta', NOW() - INTERVAL '48 hours')`);
+    const rotaAssinatura = require(path.join(raiz, 'backend', 'rotas', 'assinatura.js'));
     await rotaAssinatura.reconciliarAssinaturas(10);
     const mortas = await pool.query(`SELECT status FROM assinaturas WHERE mp_preference_id = 'pref-morta'`);
     verificar('cobrança sem pagamento em 24h expira e libera a fila',

@@ -11,7 +11,7 @@ const { executeQuery, comTransacao } = require('../database');
 const { decifrar } = require('../util/cripto');
 const { APP_URL } = require('../config/segredos');
 const {
-  criarPreferencia, consultarPagamento, buscarPagamentosDaPreferencia, validarAssinatura,
+  criarPreferencia, consultarPagamento, buscarPagamentosPorReferencia, validarAssinatura,
 } = require('../util/mercadopago');
 const { hojeSaoPaulo, somarMeses } = require('../util/datas');
 const { idDaSessao } = require('../middlewares/clienteAuth');
@@ -229,7 +229,7 @@ async function reconciliarPendentes(limiteMinutos = 10) {
     const accessToken = decifrar(linha.mp_access_token);
     if (!accessToken) continue;
     try {
-      const busca = await buscarPagamentosDaPreferencia(accessToken, linha.mp_preference_id);
+      const busca = await buscarPagamentosPorReferencia(accessToken, `pagamento:${linha.id}`);
       const aprovado = busca.find(p => p.status === 'approved');
       if (!aprovado) continue;
       await processarPagamento(linha.empresa_id, {

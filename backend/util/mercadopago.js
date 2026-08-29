@@ -67,9 +67,10 @@ async function consultarPagamento(accessToken, paymentId) {
  * Pagamentos de uma preferência. Usado na reconciliação: se o webhook se
  * perdeu, ainda achamos o pagamento aprovado pela preferência que criamos.
  */
-async function buscarPagamentosDaPreferencia(accessToken, preferenceId) {
+async function buscarPagamentosPorReferencia(accessToken, referencia) {
   const dados = await chamarMP(
-    `/v1/payments/search?preference_id=${encodeURIComponent(preferenceId)}&sort=date_created&criteria=desc`,
+    `/v1/payments/search?external_reference=${encodeURIComponent(referencia)}` +
+    '&sort=date_created&criteria=desc',
     accessToken
   );
   return Array.isArray(dados.results) ? dados.results : [];
@@ -121,5 +122,5 @@ function validarAssinatura({ segredo, xSignature, xRequestId, dataId }) {
 }
 
 module.exports = {
-  criarPreferencia, consultarPagamento, buscarPagamentosDaPreferencia, validarAssinatura,
+  criarPreferencia, consultarPagamento, buscarPagamentosPorReferencia, validarAssinatura,
 };
